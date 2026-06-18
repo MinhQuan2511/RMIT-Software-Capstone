@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Vertex Dynamics - Calibrate</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined';
+            font-weight: normal;
+            font-style: normal;
+            font-size: 24px;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            word-wrap: normal;
+            direction: ltr;
+            -webkit-font-feature-settings: 'liga';
+            -webkit-font-smoothing: antialiased;
+        }
+    </style>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-secondary-container": "#646468",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-high": "#e6e8f2",
+                        "surface-tint": "#005bc0",
+                        "primary-container": "#1a73e8",
+                        "inverse-surface": "#2d3038",
+                        "tertiary-fixed": "#ffdbcb",
+                        "primary-fixed": "#d8e2ff",
+                        "background": "#f9f9ff",
+                        "on-primary-fixed": "#001a41",
+                        "surface-container": "#ecedf7",
+                        "error-container": "#ffdad6",
+                        "on-secondary": "#ffffff",
+                        "on-error": "#ffffff",
+                        "on-surface": "#191c23",
+                        "on-tertiary-fixed-variant": "#783100",
+                        "on-primary": "#ffffff",
+                        "on-tertiary-container": "#0e0200",
+                        "surface-dim": "#d8d9e3",
+                        "on-secondary-fixed-variant": "#46474a",
+                        "surface-variant": "#e0e2ec",
+                        "on-background": "#191c23",
+                        "secondary": "#5e5e62",
+                        "on-tertiary": "#ffffff",
+                        "tertiary": "#9e4300",
+                        "surface-container-low": "#f2f3fd",
+                        "primary-fixed-dim": "#adc7ff",
+                        "primary": "#005bbf",
+                        "on-secondary-fixed": "#1a1b1e",
+                        "tertiary-fixed-dim": "#ffb691",
+                        "on-primary-fixed-variant": "#004493",
+                        "on-error-container": "#93000a",
+                        "inverse-on-surface": "#eff0fa",
+                        "surface-container-highest": "#e0e2ec",
+                        "tertiary-container": "#c55500",
+                        "error": "#ba1a1a",
+                        "on-primary-container": "#ffffff",
+                        "secondary-fixed-dim": "#c7c6ca",
+                        "outline-variant": "#c1c6d6",
+                        "on-tertiary-fixed": "#341100",
+                        "on-surface-variant": "#414754",
+                        "secondary-fixed": "#e3e2e6",
+                        "inverse-primary": "#adc7ff",
+                        "surface-bright": "#f9f9ff",
+                        "surface": "#f9f9ff",
+                        "outline": "#727785",
+                        "secondary-container": "#e3e2e6"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    spacing: {
+                        "unit": "4px",
+                        "margin-desktop": "24px",
+                        "max-content-width": "1600px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px"
+                    },
+                    fontFamily: {
+                        "headline-sm": ["Inter", "sans-serif"],
+                        "body-lg": ["Inter", "sans-serif"],
+                        "body-md": ["Inter", "sans-serif"],
+                        "label-md": ["Inter", "sans-serif"],
+                        "headline-lg": ["Inter", "sans-serif"],
+                        "code-md": ["JetBrains Mono", "monospace"],
+                        "headline-md": ["Inter", "sans-serif"]
+                    },
+                    fontSize: {
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "code-md": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-md text-body-md flex h-screen overflow-hidden">
+<!-- SPLIT SCREEN: LEFT PANEL (SideNav + Controls) -->
+<!-- Applying exact style keys from SideNavBar JSON for the shell layout -->
+<div class="flex flex-col w-[45%] h-screen pt-4 px-4 gap-2 bg-surface-container-low border-r border-outline-variant shadow-sm z-10 flex-shrink-0">
+<!-- SideNavBar Header -->
+<div class="mb-4 px-2">
+<h1 class="font-headline-md text-headline-md text-on-surface">Control Center</h1>
+<p class="font-body-md text-body-md text-on-surface-variant">Workflow Step</p>
+</div>
+<!-- SideNavBar Tabs -->
+<nav class="flex flex-col gap-1 mb-6">
+<!-- Project: Inactive -->
+<button class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all text-left rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="folder_open">folder_open</span>
+<span class="font-label-md text-label-md">Project</span>
+</button>
+<!-- Calibrate: ACTIVE STATE -->
+<button class="flex items-center gap-3 px-3 py-2 bg-primary-container text-on-primary-container rounded-lg font-bold scale-[0.98] duration-150 text-left">
+<span class="material-symbols-outlined text-[20px]" data-icon="tune" data-weight="fill" style="font-variation-settings: 'FILL' 1;">tune</span>
+<span class="font-label-md text-label-md">Calibrate</span>
+</button>
+<!-- Configure: Inactive -->
+<button class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all text-left rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-label-md text-label-md">Configure</span>
+</button>
+<!-- Preview: Inactive -->
+<button class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all text-left rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="visibility">visibility</span>
+<span class="font-label-md text-label-md">Preview</span>
+</button>
+<!-- Generate: Inactive -->
+<button class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all text-left rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="precision_manufacturing">precision_manufacturing</span>
+<span class="font-label-md text-label-md">Generate</span>
+</button>
+<!-- Export & Run: Inactive -->
+<button class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all text-left rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="rocket_launch">rocket_launch</span>
+<span class="font-label-md text-label-md">Export &amp; Run</span>
+</button>
+</nav>
+<!-- Divider -->
+<hr class="border-outline-variant my-2"/>
+<!-- Control Form Panel (Scrollable content area within the 45% pane) -->
+<div class="flex-1 overflow-y-auto pr-2 pb-6 space-y-6">
+<!-- Section 1: Calibration Target Definition -->
+<section class="bg-surface border border-outline-variant rounded-lg p-4 shadow-[0_4px_4px_rgba(0,0,0,0.02)]">
+<h2 class="font-label-md text-label-md text-primary mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">center_focus_strong</span>
+                    Calibration Target Definition
+                </h2>
+<div class="space-y-4">
+<!-- Dropdown -->
+<div>
+<label class="block font-label-md text-label-md text-on-surface-variant mb-1">Target Type</label>
+<div class="relative">
+<select class="w-full bg-surface text-on-surface border border-outline-variant rounded px-3 py-2 appearance-none focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary font-body-md text-body-md pr-8">
+<option>CharUco Board (Standard)</option>
+<option>Checkerboard (Legacy)</option>
+<option>Aruco Markers</option>
+</select>
+<span class="material-symbols-outlined absolute right-2 top-2.5 text-on-surface-variant pointer-events-none text-[20px]">arrow_drop_down</span>
+</div>
+</div>
+<!-- Input -->
+<div>
+<label class="block font-label-md text-label-md text-on-surface-variant mb-1">Square Size (mm)</label>
+<input class="w-full bg-surface text-on-surface border border-outline-variant rounded px-3 py-2 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary font-code-md text-code-md" type="number" value="35.00"/>
+</div>
+</div>
+</section>
+<!-- Section 2: TCP Offset -->
+<section class="bg-surface border border-outline-variant rounded-lg p-4 shadow-[0_4px_4px_rgba(0,0,0,0.02)]">
+<h2 class="font-label-md text-label-md text-primary mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">my_location</span>
+                    Tool Center Point (TCP) Offset
+                </h2>
+<div class="grid grid-cols-2 gap-x-6 gap-y-4">
+<!-- Translation Column -->
+<div class="space-y-3">
+<h3 class="font-label-md text-label-md text-on-surface border-b border-outline-variant pb-1">Translation</h3>
+<div class="flex items-center gap-2">
+<label class="font-code-md text-code-md text-on-surface-variant w-4">X</label>
+<input class="flex-1 bg-surface border border-outline-variant rounded px-2 py-1 font-code-md text-code-md focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="0.00"/>
+<span class="text-on-surface-variant text-[10px]">mm</span>
+</div>
+<div class="flex items-center gap-2">
+<label class="font-code-md text-code-md text-on-surface-variant w-4">Y</label>
+<input class="flex-1 bg-surface border border-outline-variant rounded px-2 py-1 font-code-md text-code-md focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="0.00"/>
+<span class="text-on-surface-variant text-[10px]">mm</span>
+</div>
+<div class="flex items-center gap-2">
+<label class="font-code-md text-code-md text-on-surface-variant w-4">Z</label>
+<input class="flex-1 bg-surface border border-outline-variant rounded px-2 py-1 font-code-md text-code-md focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="125.50"/>
+<span class="text-on-surface-variant text-[10px]">mm</span>
+</div>
+</div>
+<!-- Rotation Column -->
+<div class="space-y-3">
+<h3 class="font-label-md text-label-md text-on-surface border-b border-outline-variant pb-1">Rotation</h3>
+<div class="flex items-center gap-2">
+<label class="font-code-md text-code-md text-on-surface-variant w-6">Rx</label>
+<input class="flex-1 bg-surface border border-outline-variant rounded px-2 py-1 font-code-md text-code-md focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="180.00"/>
+<span class="text-on-surface-variant text-[10px]">deg</span>
+</div>
+<div class="flex items-center gap-2">
+<label class="font-code-md text-code-md text-on-surface-variant w-6">Ry</label>
+<input class="flex-1 bg-surface border border-outline-variant rounded px-2 py-1 font-code-md text-code-md focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="0.00"/>
+<span class="text-on-surface-variant text-[10px]">deg</span>
+</div>
+<div class="flex items-center gap-2">
+<label class="font-code-md text-code-md text-on-surface-variant w-6">Rz</label>
+<input class="flex-1 bg-surface border border-outline-variant rounded px-2 py-1 font-code-md text-code-md focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="45.00"/>
+<span class="text-on-surface-variant text-[10px]">deg</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Action Button -->
+<button class="w-full bg-primary text-on-primary py-4 rounded font-label-md text-label-md flex justify-center items-center gap-2 hover:bg-primary-container hover:text-on-primary-container transition-colors shadow-sm mt-8">
+<span class="material-symbols-outlined text-[20px]">rocket_launch</span>
+                Generate Calibration Routine
+            </button>
+</div>
+</div>
+<!-- SPLIT SCREEN: RIGHT PANEL (Workspace) -->
+<div class="flex-1 flex flex-col relative min-w-0">
+<!-- TopNavBar (Shared Component) -->
+<header class="bg-surface flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant z-20">
+<div class="font-headline-sm text-headline-sm font-bold text-primary">
+                Vertex Dynamics: Scan-to-Path Hub
+            </div>
+<div class="flex gap-4 items-center">
+<button class="text-on-surface-variant hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="sensors">sensors</span>
+</button>
+<button class="text-on-surface-variant hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="cloud_done">cloud_done</span>
+</button>
+</div>
+</header>
+<!-- Persistent 3D Visual Workspace -->
+<div class="flex-1 relative bg-surface-container-highest overflow-hidden">
+<!-- 3D Environment Placeholder -->
+<div class="absolute inset-0 bg-cover bg-center w-full h-full" data-alt="A highly detailed, modern software interface displaying a 3D visualization of an industrial robot arm calibration sequence. The central area features a stark, light-mode background grid with deep black and pristine white tones. A complex, glowing geometric wireframe of a robotic tool center point and a CharUco calibration board are rendered in the center. Accents of vibrant industrial blue highlight active coordinate axes and calibration nodes. The overall mood is technically advanced, precise, and clean, fitting a professional engineering dashboard." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAdMl-m7vDmFIkqZAWJRLjOddPMU-nIUJG6hcsAoNjGjoijbpo0BM0Yrr5vvivqA10-UoNmDu9A3sNPiVR2XaxVn45YfRhCqPZXYyCIOhbtBygGe5EqW0h5Js8wHEVDSJdzzRt_-mpKXNMcTGENcFEF2_6sxQ3Zuc1RbvUOhJg-aKCDSOycFCaH-q15xR-fxx0zsmDrzvcOAuGGUQA1Sp-GlgcpWNb0hmJOAICTxmMyj-467OPZNos7iIxoheuJ-nbsHLE6tPk7iRQ')">
+</div>
+<!-- Viewport Overlays (Simulating 3D context) -->
+<div class="absolute bottom-4 left-4 flex gap-2">
+<div class="bg-surface/90 backdrop-blur-sm border border-outline-variant rounded p-2 text-on-surface flex flex-col items-center shadow-sm">
+<span class="font-code-md text-code-md text-[10px] text-primary">Z</span>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-2">
+<span class="font-code-md text-code-md text-[10px] text-error">X</span>
+<div class="w-4 h-px bg-outline-variant"></div>
+<div class="w-4 h-px bg-outline-variant opacity-0"></div> <!-- spacer -->
+<div class="w-px h-4 bg-outline-variant rotate-45 transform origin-left"></div>
+<span class="font-code-md text-code-md text-[10px] text-tertiary -ml-1 mt-2">Y</span>
+</div>
+</div>
+</div>
+<!-- Success Popup (Top Right Overlay) -->
+<div class="absolute top-4 right-4 z-50 animate-fade-in">
+<div class="bg-surface-container-lowest border border-primary border-l-4 rounded shadow-[0_8px_16px_rgba(0,0,0,0.1)] p-4 flex gap-3 max-w-md items-start">
+<span class="material-symbols-outlined text-primary mt-0.5">check_circle</span>
+<div>
+<h4 class="font-label-md text-label-md text-on-surface mb-1">Success</h4>
+<p class="font-body-md text-body-md text-on-surface-variant leading-tight">
+                            Calibration RAPID routine copied to clipboard. Launching external protocol connection...
+                        </p>
+</div>
+<button class="text-on-surface-variant hover:text-on-surface ml-2">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Simple CSS animation for the toast -->
+<style>
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .animate-fade-in {
+            animation: fadeInDown 0.3s ease-out forwards;
+        }
+    </style>
+</body></html>

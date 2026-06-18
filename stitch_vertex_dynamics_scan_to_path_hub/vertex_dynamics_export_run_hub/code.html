@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Vertex Dynamics - Export &amp; Run</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-secondary-container": "#646468",
+                    "surface-container-lowest": "#ffffff",
+                    "surface-container-high": "#e6e8f2",
+                    "surface-tint": "#005bc0",
+                    "primary-container": "#1a73e8",
+                    "inverse-surface": "#2d3038",
+                    "tertiary-fixed": "#ffdbcb",
+                    "primary-fixed": "#d8e2ff",
+                    "background": "#f9f9ff",
+                    "on-primary-fixed": "#001a41",
+                    "surface-container": "#ecedf7",
+                    "error-container": "#ffdad6",
+                    "on-secondary": "#ffffff",
+                    "on-error": "#ffffff",
+                    "on-surface": "#191c23",
+                    "on-tertiary-fixed-variant": "#783100",
+                    "on-primary": "#ffffff",
+                    "on-tertiary-container": "#0e0200",
+                    "surface-dim": "#d8d9e3",
+                    "on-secondary-fixed-variant": "#46474a",
+                    "surface-variant": "#e0e2ec",
+                    "on-background": "#191c23",
+                    "secondary": "#5e5e62",
+                    "on-tertiary": "#ffffff",
+                    "tertiary": "#9e4300",
+                    "surface-container-low": "#f2f3fd",
+                    "primary-fixed-dim": "#adc7ff",
+                    "primary": "#005bbf",
+                    "on-secondary-fixed": "#1a1b1e",
+                    "tertiary-fixed-dim": "#ffb691",
+                    "on-primary-fixed-variant": "#004493",
+                    "on-error-container": "#93000a",
+                    "inverse-on-surface": "#eff0fa",
+                    "surface-container-highest": "#e0e2ec",
+                    "tertiary-container": "#c55500",
+                    "error": "#ba1a1a",
+                    "on-primary-container": "#ffffff",
+                    "secondary-fixed-dim": "#c7c6ca",
+                    "outline-variant": "#c1c6d6",
+                    "on-tertiary-fixed": "#341100",
+                    "on-surface-variant": "#414754",
+                    "secondary-fixed": "#e3e2e6",
+                    "inverse-primary": "#adc7ff",
+                    "surface-bright": "#f9f9ff",
+                    "surface": "#f9f9ff",
+                    "outline": "#727785",
+                    "secondary-container": "#e3e2e6"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "unit": "4px",
+                    "margin-desktop": "24px",
+                    "max-content-width": "1600px",
+                    "margin-mobile": "16px",
+                    "gutter": "16px"
+            },
+            "fontFamily": {
+                    "headline-sm": ["Inter"],
+                    "body-lg": ["Inter"],
+                    "body-md": ["Inter"],
+                    "label-md": ["Inter"],
+                    "headline-lg": ["Inter"],
+                    "code-md": ["JetBrains Mono"],
+                    "headline-md": ["Inter"]
+            },
+            "fontSize": {
+                    "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                    "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                    "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                    "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                    "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                    "code-md": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                    "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background h-screen w-full overflow-hidden flex flex-col font-body-md">
+<!-- TopNavBar -->
+<header class="bg-surface dark:bg-background border-b border-outline-variant dark:border-outline flat no shadows flex justify-between items-center w-full px-margin-desktop h-16 shrink-0 z-20 relative">
+<div class="flex items-center gap-4">
+<h1 class="font-headline-sm text-headline-sm font-bold text-primary dark:text-primary-fixed tracking-tight">Vertex Dynamics: Scan-to-Path Hub</h1>
+</div>
+<div class="flex items-center gap-4 hidden">
+<!-- Search bar hidden per JSON -->
+</div>
+<div class="flex items-center gap-4 text-primary dark:text-primary-fixed">
+<button class="hover:bg-surface-container-low dark:hover:bg-on-surface-variant transition-colors p-2 rounded-full flex items-center justify-center opacity-80 scale-95 transition-transform">
+<span class="material-symbols-outlined" data-icon="sensors">sensors</span>
+</button>
+<button class="hover:bg-surface-container-low dark:hover:bg-on-surface-variant transition-colors p-2 rounded-full flex items-center justify-center opacity-80 scale-95 transition-transform">
+<span class="material-symbols-outlined" data-icon="cloud_done">cloud_done</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden relative">
+<!-- SideNavBar -->
+<nav class="bg-surface-container-low dark:bg-surface-dim border-r border-outline-variant dark:border-outline shadow-sm flex flex-col w-[280px] shrink-0 h-full pt-4 px-4 gap-2 z-10 overflow-y-auto">
+<div class="mb-6 px-2">
+<h2 class="font-headline-md text-headline-md text-on-surface dark:text-on-surface">Control Center</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">Workflow Step</p>
+</div>
+<ul class="flex flex-col gap-1 w-full">
+<!-- Project -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="folder_open">folder_open</span>
+<span class="font-label-md text-label-md">Project</span>
+</a>
+</li>
+<!-- Calibrate -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="tune">tune</span>
+<span class="font-label-md text-label-md">Calibrate</span>
+</a>
+</li>
+<!-- Configure -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-label-md text-label-md">Configure</span>
+</a>
+</li>
+<!-- Preview -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+<span class="font-label-md text-label-md">Preview</span>
+</a>
+</li>
+<!-- Generate -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="precision_manufacturing">precision_manufacturing</span>
+<span class="font-label-md text-label-md">Generate</span>
+</a>
+</li>
+<!-- Export & Run (Active) -->
+<li>
+<a class="flex items-center gap-3 px-3 py-2.5 bg-primary-container text-on-primary-container dark:bg-primary dark:text-on-primary rounded-lg font-bold scale-[0.98] duration-150 transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="rocket_launch" data-weight="fill" style="font-variation-settings: 'FILL' 1;">rocket_launch</span>
+<span class="font-label-md text-label-md">Export &amp; Run</span>
+</a>
+</li>
+</ul>
+</nav>
+<!-- Main Content Area (Split Screen) -->
+<main class="flex-1 flex flex-row gap-gutter p-gutter h-full overflow-hidden bg-background">
+<!-- Left & Center-Left Wrapper -->
+<div class="flex w-1/2 flex-col gap-gutter h-full">
+<!-- Left Column: Instructions & Actions -->
+<section class="bg-surface-container-lowest border border-outline-variant shadow-[0_4px_12px_rgba(0,0,0,0.05)] rounded-xl p-6 flex flex-col gap-6 shrink-0 relative">
+<header>
+<h3 class="font-headline-sm text-headline-sm text-on-surface mb-1 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="integration_instructions">integration_instructions</span>
+                            External Desktop Sync Instructions
+                        </h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Complete these steps to transfer the generated path to the physical controller via RobotStudio.</p>
+</header>
+<ol class="flex flex-col gap-3 font-body-md text-body-md text-on-surface">
+<li class="flex items-start gap-3 bg-surface-container-low p-3 rounded-lg border border-outline-variant/50">
+<span class="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-on-primary font-label-md text-label-md shrink-0">1</span>
+<span><strong>Auto-copy code</strong> to your system clipboard using the primary action button below.</span>
+</li>
+<li class="flex items-start gap-3 bg-surface-container-low p-3 rounded-lg border border-outline-variant/50">
+<span class="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-on-primary font-label-md text-label-md shrink-0">2</span>
+<span><strong>Alt+Tab to RobotStudio</strong> and ensure your target workstation is online and selected.</span>
+</li>
+<li class="flex items-start gap-3 bg-surface-container-low p-3 rounded-lg border border-outline-variant/50">
+<span class="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-on-primary font-label-md text-label-md shrink-0">3</span>
+<span><strong>Ctrl+V in editor</strong> module `Module1.mod` replacing the existing `PROC main()` block.</span>
+</li>
+<li class="flex items-start gap-3 bg-surface-container-low p-3 rounded-lg border border-outline-variant/50">
+<span class="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-on-primary font-label-md text-label-md shrink-0">4</span>
+<span><strong>Sync &amp; validate</strong> by applying changes and running a simulated dry-pass.</span>
+</li>
+</ol>
+<div class="flex flex-col gap-3 mt-auto pt-4 border-t border-outline-variant">
+<button class="w-full bg-primary hover:bg-surface-tint text-on-primary font-label-md text-label-md py-4 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm">
+<span class="material-symbols-outlined" data-icon="content_copy">content_copy</span>
+                            📋 Copy Code &amp; Launch RobotStudio Desktop
+                        </button>
+<button class="w-full bg-surface-container-lowest hover:bg-surface-container-low border border-outline text-on-surface font-label-md text-label-md py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors">
+<span class="material-symbols-outlined" data-icon="refresh">refresh</span>
+                            🔄 Reset Local Session Data
+                        </button>
+</div>
+</section>
+<!-- Center-Left: Code Block -->
+<section class="bg-inverse-surface rounded-xl border border-outline shadow-sm flex flex-col flex-1 overflow-hidden relative">
+<header class="bg-on-surface px-4 py-3 flex justify-between items-center border-b border-outline/30 shrink-0">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-inverse-on-surface text-sm" data-icon="code">code</span>
+<span class="font-label-md text-label-md text-inverse-on-surface uppercase tracking-wider">ABB RAPID OUTPUT</span>
+</div>
+<span class="bg-surface-container-lowest text-on-surface font-label-md text-[10px] px-2 py-1 rounded-sm uppercase">Generated</span>
+</header>
+<div class="p-4 overflow-y-auto flex-1 font-code-md text-code-md text-inverse-primary leading-relaxed">
+<pre><code>MODULE MainModule
+    CONST robtarget pHome := [[500, 0, 500], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+    CONST robtarget pScan1 := [[520.12, 10.5, 480.9], [0.98, 0.1, -0.05, 0.02], [0, -1, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+    CONST robtarget pScan2 := [[540.33, 22.1, 460.2], [0.96, 0.15, -0.1, 0.05], [0, -1, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+    CONST robtarget pScan3 := [[560.81, 35.6, 440.7], [0.94, 0.2, -0.15, 0.08], [0, -1, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+
+    ! Auto-generated dynamic pathing data
+    PERS wobjdata wobj_scan := [FALSE, TRUE, "", [[0,0,0],[1,0,0,0]], [[150,-50,200],[1,0,0,0]]];
+    PERS tooldata tool_sensor := [TRUE, [[0,0,150],[1,0,0,0]], [1.5, [0,0,50], [1,0,0,0], 0.05, 0.05, 0.05]];
+
+    PROC main()
+        ConfL \Off;
+        ConfJ \Off;
+        MoveJ pHome, v500, fine, tool_sensor \WObj:=wobj_scan;
+        
+        ! Scanning Sequence Start
+        SetDO do_LaserActive, 1;
+        MoveL pScan1, v100, z10, tool_sensor \WObj:=wobj_scan;
+        MoveL pScan2, v100, z10, tool_sensor \WObj:=wobj_scan;
+        MoveL pScan3, v100, z10, tool_sensor \WObj:=wobj_scan;
+        SetDO do_LaserActive, 0;
+        
+        MoveJ pHome, v500, fine, tool_sensor \WObj:=wobj_scan;
+    ENDPROC
+ENDMODULE</code></pre>
+</div>
+</section>
+</div>
+<!-- Right Column: 3D Viewport -->
+<section class="flex-1 bg-surface-container-lowest border border-outline-variant shadow-[0_4px_12px_rgba(0,0,0,0.05)] rounded-xl overflow-hidden flex flex-col relative h-full">
+<!-- Banner -->
+<div class="bg-tertiary text-on-tertiary px-4 py-2 flex items-center justify-center gap-2 shrink-0 z-10 shadow-md">
+<span class="material-symbols-outlined text-sm" data-icon="warning">warning</span>
+<span class="font-label-md text-label-md uppercase tracking-wider">⚠️ Emulated Desktop Preview Active</span>
+</div>
+<!-- 3D Canvas Placeholder -->
+<div class="flex-1 relative bg-surface-container w-full h-full">
+<div class="absolute inset-0 bg-cover bg-center w-full h-full opacity-90 mix-blend-multiply" data-alt="A highly detailed 3D rendering of an industrial ABB robotic arm in a brightly lit, modern factory setting. The arm is shown tracing a complex, glowing blue path over a metallic mechanical component. The environment is clean, clinical, and high-tech, featuring a light-mode aesthetic with soft, diffused studio lighting and subtle reflections on the glossy white floor." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAPoHyGCRoUa2vaSj1qiCfNXTJRk6sEXiu3nQSejFkKpG0OX_qwl4zwaRXoWmJ58VST5AnBWCICBCEVRGRCn4FaB5JmSnq2HzbqH3zULswU5a0YDm7TRbDjjb64Q0d6xuKqmSF6pTk-zPnccqg-x4P3W2nspW4aqNSgm1AesIqCR20RYByRU12NMBIhv1Wevl8mRLZa-E0Jytl_tcpMkwkoLnvWjDltp43c7CsZNH1ecyY3TVq0OkWBbPTSSVN-hFWlThzoohgIgAc')"></div>
+<!-- Viewport Overlay Controls -->
+<div class="absolute bottom-4 left-4 right-4 flex justify-between items-end pointer-events-none">
+<div class="flex flex-col gap-2 pointer-events-auto">
+<button class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant text-on-surface p-2 rounded-lg hover:bg-surface-container-low transition-colors shadow-sm">
+<span class="material-symbols-outlined" data-icon="zoom_in">zoom_in</span>
+</button>
+<button class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant text-on-surface p-2 rounded-lg hover:bg-surface-container-low transition-colors shadow-sm">
+<span class="material-symbols-outlined" data-icon="zoom_out">zoom_out</span>
+</button>
+<button class="bg-surface-container-lowest/80 backdrop-blur-sm border border-outline-variant text-on-surface p-2 rounded-lg hover:bg-surface-container-low transition-colors shadow-sm">
+<span class="material-symbols-outlined" data-icon="360">360</span>
+</button>
+</div>
+<div class="bg-surface-container-lowest/90 backdrop-blur-md border border-outline-variant text-on-surface px-4 py-3 rounded-lg shadow-sm flex items-center gap-4 pointer-events-auto">
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface-variant">TCP Status</span>
+<span class="font-code-md text-code-md text-primary font-bold">X: 520.12 Y: 10.5</span>
+</div>
+<div class="w-px h-8 bg-outline-variant/50"></div>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface-variant">Simulation Time</span>
+<span class="font-code-md text-code-md text-on-surface">00:04.25</span>
+</div>
+<button class="ml-2 bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center shadow-md hover:bg-surface-tint transition-colors">
+<span class="material-symbols-outlined" data-icon="play_arrow">play_arrow</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body></html>

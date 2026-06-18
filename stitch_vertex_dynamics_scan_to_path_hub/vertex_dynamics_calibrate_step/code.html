@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Vertex Dynamics: Scan-to-Path Hub - Calibrate</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary-fixed-variant": "#46474a",
+                      "inverse-on-surface": "#eff0fa",
+                      "surface-variant": "#e0e2ec",
+                      "on-tertiary-fixed-variant": "#783100",
+                      "inverse-primary": "#adc7ff",
+                      "surface-container": "#ecedf7",
+                      "secondary-fixed-dim": "#c7c6ca",
+                      "primary-fixed": "#d8e2ff",
+                      "surface-tint": "#005bc0",
+                      "on-primary-fixed-variant": "#004493",
+                      "tertiary-fixed": "#ffdbcb",
+                      "on-primary-fixed": "#001a41",
+                      "outline": "#727785",
+                      "error": "#ba1a1a",
+                      "surface-container-high": "#e6e8f2",
+                      "on-secondary": "#ffffff",
+                      "primary": "#005bbf",
+                      "primary-container": "#1a73e8",
+                      "secondary": "#5e5e62",
+                      "background": "#f9f9ff",
+                      "on-tertiary-container": "#0e0200",
+                      "surface-container-highest": "#e0e2ec",
+                      "on-primary-container": "#ffffff",
+                      "outline-variant": "#c1c6d6",
+                      "on-error": "#ffffff",
+                      "on-error-container": "#93000a",
+                      "on-primary": "#ffffff",
+                      "on-tertiary": "#ffffff",
+                      "surface": "#f9f9ff",
+                      "surface-bright": "#f9f9ff",
+                      "on-surface-variant": "#414754",
+                      "on-secondary-fixed": "#1a1b1e",
+                      "on-background": "#191c23",
+                      "surface-container-lowest": "#ffffff",
+                      "on-surface": "#191c23",
+                      "secondary-fixed": "#e3e2e6",
+                      "secondary-container": "#e3e2e6",
+                      "primary-fixed-dim": "#adc7ff",
+                      "on-tertiary-fixed": "#341100",
+                      "tertiary-container": "#c55500",
+                      "tertiary-fixed-dim": "#ffb691",
+                      "tertiary": "#9e4300",
+                      "inverse-surface": "#2d3038",
+                      "error-container": "#ffdad6",
+                      "on-secondary-container": "#646468",
+                      "surface-dim": "#d8d9e3",
+                      "surface-container-low": "#f2f3fd"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "gutter": "16px",
+                      "margin-desktop": "24px",
+                      "unit": "4px",
+                      "margin-mobile": "16px",
+                      "max-content-width": "1600px"
+              },
+              "fontFamily": {
+                      "code-md": [
+                              "JetBrains Mono"
+                      ],
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "headline-lg": [
+                              "Inter"
+                      ],
+                      "label-md": [
+                              "Inter"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Inter"
+                      ],
+                      "headline-sm": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "code-md": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-lg": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-lg": [
+                              "32px",
+                              {
+                                      "lineHeight": "40px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-md": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-sm": [
+                              "20px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "500"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+<style>
+        .glowing-badge {
+            box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+        }
+        .bg-3d-viewport {
+            background-color: #1e2329;
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+      </style>
+</head>
+<body class="bg-background text-on-background font-body-md min-h-screen flex flex-col">
+<!-- TopNavBar -->
+<nav class="bg-surface dark:bg-background border-b border-outline-variant dark:border-outline flex justify-between items-center w-full px-margin-desktop h-16 shrink-0 sticky top-0 z-50">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary text-[28px]" style="font-variation-settings: 'FILL' 1;">hub</span>
+<h1 class="font-headline-sm text-headline-sm font-bold text-primary dark:text-primary-fixed">Vertex Dynamics: Scan-to-Path Hub</h1>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-container-high border border-outline-variant">
+<div class="w-2 h-2 rounded-full bg-green-500 glowing-badge"></div>
+<span class="font-label-md text-label-md text-on-surface">Tracer Studio API: Connected</span>
+</div>
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-container-high border border-outline-variant">
+<div class="w-2 h-2 rounded-full bg-green-500 glowing-badge"></div>
+<span class="font-label-md text-label-md text-on-surface">RobotStudio API: Connected</span>
+</div>
+<div class="flex items-center gap-4 text-primary dark:text-primary-fixed">
+<button aria-label="Sensors" class="hover:bg-surface-container-low dark:hover:bg-on-surface-variant transition-colors p-2 rounded-full flex items-center justify-center group">
+<span class="material-symbols-outlined group-active:opacity-80 group-active:scale-95 transition-transform" data-icon="sensors">sensors</span>
+</button>
+<button aria-label="Cloud Done" class="hover:bg-surface-container-low dark:hover:bg-on-surface-variant transition-colors p-2 rounded-full flex items-center justify-center group">
+<span class="material-symbols-outlined group-active:opacity-80 group-active:scale-95 transition-transform" data-icon="cloud_done">cloud_done</span>
+</button>
+</div>
+</div>
+</nav>
+<!-- Main Workspace -->
+<div class="flex flex-1 overflow-hidden">
+<!-- SideNavBar (Used as Horizontal Stepper Context in prompt, but maintaining JSON SideNav structure for layout as requested by split) -->
+<aside class="bg-surface-container-low dark:bg-surface-dim border-r border-outline-variant dark:border-outline shadow-sm flex flex-col w-[45%] h-full pt-4 px-4 gap-2 shrink-0 z-40 overflow-y-auto hidden md:flex">
+<div class="mb-6 px-2">
+<h2 class="font-headline-md text-headline-md text-on-surface dark:text-on-surface font-bold tracking-tight">Automated Hand-Eye Calibration Wizard</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">Configure and execute the calibration routine to align the robot's coordinate system with the 3D scanner.</p>
+</div>
+<!-- Stepper Progress -->
+<div class="mb-8 px-2 flex items-center justify-between relative">
+<div class="absolute left-0 top-1/2 w-full h-[2px] bg-outline-variant -z-10 translate-y-[-50%]"></div>
+<!-- Step 1 -->
+<div class="flex flex-col items-center gap-1 bg-surface-container-low">
+<div class="w-6 h-6 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-label-md text-[10px]">
+<span class="material-symbols-outlined text-[14px]">check</span>
+</div>
+<span class="font-label-md text-[10px] text-on-surface-variant">Project</span>
+</div>
+<!-- Step 2 (Active) -->
+<div class="flex flex-col items-center gap-1 bg-surface-container-low px-2">
+<div class="w-8 h-8 rounded-full bg-primary text-on-primary border-2 border-surface-container-low flex items-center justify-center font-label-md text-[14px] shadow-sm">
+                        2
+                    </div>
+<span class="font-label-md text-label-md text-primary font-bold">Calibrate</span>
+</div>
+<!-- Step 3 -->
+<div class="flex flex-col items-center gap-1 bg-surface-container-low">
+<div class="w-6 h-6 rounded-full bg-surface-container-high border border-outline-variant text-on-surface-variant flex items-center justify-center font-label-md text-[10px]">
+                        3
+                    </div>
+<span class="font-label-md text-[10px] text-on-surface-variant">Configure</span>
+</div>
+<div class="flex flex-col items-center gap-1 bg-surface-container-low">
+<div class="w-6 h-6 rounded-full bg-surface-container-high border border-outline-variant text-on-surface-variant flex items-center justify-center font-label-md text-[10px]">
+                        4
+                    </div>
+<span class="font-label-md text-[10px] text-on-surface-variant">Preview</span>
+</div>
+<div class="flex flex-col items-center gap-1 bg-surface-container-low">
+<div class="w-6 h-6 rounded-full bg-surface-container-high border border-outline-variant text-on-surface-variant flex items-center justify-center font-label-md text-[10px]">
+                        5
+                    </div>
+<span class="font-label-md text-[10px] text-on-surface-variant">Generate</span>
+</div>
+<div class="flex flex-col items-center gap-1 bg-surface-container-low">
+<div class="w-6 h-6 rounded-full bg-surface-container-high border border-outline-variant text-on-surface-variant flex items-center justify-center font-label-md text-[10px]">
+                        6
+                    </div>
+<span class="font-label-md text-[10px] text-on-surface-variant text-center leading-tight">Export<br/>&amp; Run</span>
+</div>
+</div>
+<!-- Calibration Controls Container -->
+<div class="flex-1 flex flex-col gap-6">
+<!-- Target Settings -->
+<div class="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
+<div class="absolute top-0 left-0 w-1 h-full bg-outline-variant"></div>
+<h3 class="font-label-md text-label-md text-on-surface mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">center_focus_strong</span>
+                        Calibration Target Definition
+                    </h3>
+<div class="grid grid-cols-2 gap-4">
+<div>
+<label class="block font-label-md text-[11px] text-on-surface-variant mb-1 uppercase tracking-wider">Target Type</label>
+<select class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary appearance-none">
+<option>ChArUco Board</option>
+<option>Checkerboard</option>
+<option>Circle Grid</option>
+</select>
+</div>
+<div>
+<label class="block font-label-md text-[11px] text-on-surface-variant mb-1 uppercase tracking-wider">Square Size (mm)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary font-code-md" type="number" value="30.0"/>
+</div>
+</div>
+</div>
+<!-- TCP Settings -->
+<div class="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
+<div class="absolute top-0 left-0 w-1 h-full bg-outline-variant"></div>
+<h3 class="font-label-md text-label-md text-on-surface mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">precision_manufacturing</span>
+                        Tool Center Point (TCP) Offset
+                    </h3>
+<div class="grid grid-cols-3 gap-3 mb-3">
+<div>
+<label class="block font-code-md text-[11px] text-on-surface-variant mb-1">X (mm)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 font-code-md text-code-md text-on-surface focus:border-primary" type="number" value="0.00"/>
+</div>
+<div>
+<label class="block font-code-md text-[11px] text-on-surface-variant mb-1">Y (mm)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 font-code-md text-code-md text-on-surface focus:border-primary" type="number" value="150.00"/>
+</div>
+<div>
+<label class="block font-code-md text-[11px] text-on-surface-variant mb-1">Z (mm)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 font-code-md text-code-md text-on-surface focus:border-primary" type="number" value="45.50"/>
+</div>
+</div>
+<div class="grid grid-cols-3 gap-3">
+<div>
+<label class="block font-code-md text-[11px] text-on-surface-variant mb-1">Rx (deg)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 font-code-md text-code-md text-on-surface focus:border-primary" type="number" value="90.0"/>
+</div>
+<div>
+<label class="block font-code-md text-[11px] text-on-surface-variant mb-1">Ry (deg)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 font-code-md text-code-md text-on-surface focus:border-primary" type="number" value="0.0"/>
+</div>
+<div>
+<label class="block font-code-md text-[11px] text-on-surface-variant mb-1">Rz (deg)</label>
+<input class="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 font-code-md text-code-md text-on-surface focus:border-primary" type="number" value="-90.0"/>
+</div>
+</div>
+</div>
+<!-- Primary Action -->
+<div class="mt-auto pb-4">
+<button class="w-full bg-primary hover:bg-primary-container text-on-primary rounded-xl p-4 flex flex-col items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-md hover:shadow-lg group border border-transparent">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[24px] group-hover:rotate-180 transition-transform duration-500">sync</span>
+<span class="font-headline-sm text-headline-sm font-bold">Generate Calibration Routine</span>
+</div>
+<span class="font-body-md text-[12px] text-on-primary/80 text-center max-w-[80%] leading-tight">Generates custom RAPID routine to move and rotate the robot wrist around the calibration target board.</span>
+</button>
+<div class="flex gap-4 mt-4">
+<button class="flex-1 bg-surface border border-outline-variant text-on-surface hover:bg-surface-container-high rounded-lg py-2.5 font-label-md text-label-md transition-colors flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                            Back to Project
+                        </button>
+<button class="flex-1 bg-surface-variant border border-outline-variant text-on-surface-variant rounded-lg py-2.5 font-label-md text-label-md flex items-center justify-center gap-2 opacity-50 cursor-not-allowed">
+                            Next Step
+                            <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</aside>
+<!-- Right Viewport (55%) -->
+<main class="flex-1 relative flex flex-col min-w-0 bg-3d-viewport">
+<!-- Viewport Header Toolbar -->
+<div class="absolute top-4 left-4 right-4 flex justify-between items-start z-10 pointer-events-none">
+<div class="bg-surface/10 backdrop-blur-md border border-white/10 rounded-lg p-2 pointer-events-auto shadow-lg flex items-center gap-3">
+<span class="material-symbols-outlined text-white/70">view_in_ar</span>
+<div class="flex flex-col">
+<span class="font-label-md text-[11px] text-white/50 uppercase tracking-widest">Active Viewport</span>
+<span class="font-body-md text-[13px] text-white font-medium">[3D Point Cloud &amp; ABB RobotStudio Simulation Window Workspace]</span>
+</div>
+</div>
+<div class="bg-surface/10 backdrop-blur-md border border-white/10 rounded-lg p-1.5 pointer-events-auto flex flex-col gap-1 shadow-lg">
+<button class="p-1.5 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors" title="Top View">
+<span class="material-symbols-outlined text-[18px]">vertical_align_top</span>
+</button>
+<button class="p-1.5 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors" title="Front View">
+<span class="material-symbols-outlined text-[18px]">vertical_align_center</span>
+</button>
+<button class="p-1.5 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors" title="Isometric View">
+<span class="material-symbols-outlined text-[18px]">deployed_code</span>
+</button>
+</div>
+</div>
+<!-- Center Placeholder Content -->
+<div class="flex-1 flex items-center justify-center pointer-events-none">
+<div class="border-2 border-dashed border-white/20 rounded-xl p-12 text-center max-w-lg bg-black/20 backdrop-blur-sm pointer-events-auto">
+<span class="material-symbols-outlined text-[48px] text-white/30 mb-4 block">360</span>
+<h3 class="font-headline-sm text-headline-sm text-white/80 font-medium mb-2">Simulation Workspace</h3>
+<p class="font-body-md text-body-md text-white/50">Generative RAPID code will render the calibration path envelope here once generated.</p>
+</div>
+</div>
+<!-- Bottom Overlay Controls -->
+<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-surface/10 backdrop-blur-md border border-white/10 rounded-full p-1.5 shadow-2xl z-10 pointer-events-auto">
+<button class="flex items-center gap-2 px-4 py-2 rounded-full hover:bg-white/10 text-white transition-colors">
+<span class="material-symbols-outlined text-[18px]">360</span>
+<span class="font-label-md text-label-md">Orbit</span>
+</button>
+<div class="w-[1px] h-4 bg-white/20"></div>
+<button class="flex items-center gap-2 px-4 py-2 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[18px]">pan_tool</span>
+<span class="font-label-md text-label-md">Pan</span>
+</button>
+<div class="w-[1px] h-4 bg-white/20"></div>
+<button class="flex items-center gap-2 px-4 py-2 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[18px]">zoom_in</span>
+<span class="font-label-md text-label-md">Zoom</span>
+</button>
+<div class="w-[1px] h-4 bg-white/20"></div>
+<button class="flex items-center gap-2 px-4 py-2 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors bg-white/5 border border-white/10">
+<span class="material-symbols-outlined text-[18px] text-primary-fixed-dim">scatter_plot</span>
+<span class="font-label-md text-label-md">Toggle Point Cloud</span>
+</button>
+</div>
+</main>
+</div>
+</body></html>

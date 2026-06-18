@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Vertex Dynamics - Splash</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary-container": "#646468",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-high": "#e6e8f2",
+                        "surface-tint": "#005bc0",
+                        "primary-container": "#1a73e8",
+                        "inverse-surface": "#2d3038",
+                        "tertiary-fixed": "#ffdbcb",
+                        "primary-fixed": "#d8e2ff",
+                        "background": "#f9f9ff",
+                        "on-primary-fixed": "#001a41",
+                        "surface-container": "#ecedf7",
+                        "error-container": "#ffdad6",
+                        "on-secondary": "#ffffff",
+                        "on-error": "#ffffff",
+                        "on-surface": "#191c23",
+                        "on-tertiary-fixed-variant": "#783100",
+                        "on-primary": "#ffffff",
+                        "on-tertiary-container": "#0e0200",
+                        "surface-dim": "#d8d9e3",
+                        "on-secondary-fixed-variant": "#46474a",
+                        "surface-variant": "#e0e2ec",
+                        "on-background": "#191c23",
+                        "secondary": "#5e5e62",
+                        "on-tertiary": "#ffffff",
+                        "tertiary": "#9e4300",
+                        "surface-container-low": "#f2f3fd",
+                        "primary-fixed-dim": "#adc7ff",
+                        "primary": "#005bbf",
+                        "on-secondary-fixed": "#1a1b1e",
+                        "tertiary-fixed-dim": "#ffb691",
+                        "on-primary-fixed-variant": "#004493",
+                        "on-error-container": "#93000a",
+                        "inverse-on-surface": "#eff0fa",
+                        "surface-container-highest": "#e0e2ec",
+                        "tertiary-container": "#c55500",
+                        "error": "#ba1a1a",
+                        "on-primary-container": "#ffffff",
+                        "secondary-fixed-dim": "#c7c6ca",
+                        "outline-variant": "#c1c6d6",
+                        "on-tertiary-fixed": "#341100",
+                        "on-surface-variant": "#414754",
+                        "secondary-fixed": "#e3e2e6",
+                        "inverse-primary": "#adc7ff",
+                        "surface-bright": "#f9f9ff",
+                        "surface": "#f9f9ff",
+                        "outline": "#727785",
+                        "secondary-container": "#e3e2e6"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "unit": "4px",
+                        "margin-desktop": "24px",
+                        "max-content-width": "1600px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px"
+                    },
+                    "fontFamily": {
+                        "headline-sm": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "code-md": ["JetBrains Mono"],
+                        "headline-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "code-md": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .tech-grid {
+            background-size: 48px 48px;
+            background-image: 
+                linear-gradient(to right, rgba(193, 198, 214, 0.3) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(193, 198, 214, 0.3) 1px, transparent 1px);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md text-body-md antialiased overflow-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- Splash Screen Container -->
+<main class="relative min-h-screen w-full flex flex-col items-center justify-center">
+<!-- Background Layer -->
+<div class="absolute inset-0 z-0 tech-grid opacity-60"></div>
+<div class="absolute inset-0 z-0 bg-gradient-to-br from-surface-bright via-background to-surface-container-low opacity-90"></div>
+<div class="absolute top-0 right-0 w-[800px] h-[800px] bg-primary-fixed rounded-full blur-[120px] opacity-20 -translate-y-1/2 translate-x-1/3"></div>
+<!-- Main Content Area -->
+<div class="relative z-10 w-full max-w-[1400px] px-margin-desktop md:px-12 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center mt-[-5%]">
+<!-- Left Side: Typography & Branding (8 columns) -->
+<div class="lg:col-span-8 flex flex-col gap-6">
+<!-- Branding Eyebrow -->
+<div class="flex items-center gap-2 text-primary font-label-md text-label-md tracking-[0.1em] uppercase">
+<span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">school</span>
+<span>RMIT University Capstone 2026</span>
+</div>
+<!-- Main Headline -->
+<h1 class="font-headline-lg text-headline-lg md:text-[56px] md:leading-[1.1] font-extrabold text-on-surface tracking-tight">
+                    Vertex Dynamics: <br/>
+<span class="text-primary bg-clip-text text-transparent bg-gradient-to-r from-primary to-surface-tint">Scan-to-Path Hub</span>
+</h1>
+<!-- Subtitle -->
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl mt-4">
+                    Next-Generation 3D Vision &amp; Industrial Robot Integration. 
+                    A unified environment for scanning, path generation, and precision control.
+                </p>
+</div>
+<!-- Right Side: Status Card (4 columns) -->
+<div class="lg:col-span-4 flex justify-end">
+<div class="w-full max-w-sm bg-surface rounded-xl border border-outline-variant shadow-[0_8px_32px_rgba(0,0,0,0.04)] overflow-hidden backdrop-blur-sm bg-opacity-95">
+<!-- Card Header -->
+<div class="px-6 py-5 border-b border-surface-variant bg-surface-container-lowest flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-surface-container-low flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">dns</span>
+</div>
+<h2 class="font-headline-sm text-headline-sm text-on-surface">System Status Overview</h2>
+</div>
+<!-- Card Body -->
+<div class="p-6 flex flex-col gap-4 bg-surface">
+<!-- Status Item: Camera -->
+<div class="flex items-center justify-between p-3 rounded-lg border border-surface-container bg-surface-container-lowest">
+<div class="flex items-center gap-3 text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">photo_camera</span>
+<span class="font-body-md text-body-md">Camera Status</span>
+</div>
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-full bg-secondary-container bg-opacity-30">
+<span class="w-2 h-2 rounded-full bg-secondary block"></span>
+<span class="font-label-md text-label-md text-secondary">Standby</span>
+</div>
+</div>
+<!-- Status Item: Robot Bridge -->
+<div class="flex items-center justify-between p-3 rounded-lg border border-surface-container bg-surface-container-lowest">
+<div class="flex items-center gap-3 text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">precision_manufacturing</span>
+<span class="font-body-md text-body-md">Robot Bridge</span>
+</div>
+<div class="flex items-center gap-2 px-2.5 py-1 rounded-full bg-error-container bg-opacity-30">
+<span class="w-2 h-2 rounded-full bg-error block animate-pulse"></span>
+<span class="font-label-md text-label-md text-error">Offline</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom: Action Button -->
+<div class="absolute bottom-20 w-full flex justify-center z-20 px-margin-desktop">
+<button class="group flex items-center gap-4 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-8 py-4 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
+<span class="font-label-md text-label-md tracking-wider uppercase">Enter Control System</span>
+<span class="material-symbols-outlined transition-transform duration-300 group-hover:translate-x-1">arrow_forward</span>
+</button>
+</div>
+</main>
+</body></html>

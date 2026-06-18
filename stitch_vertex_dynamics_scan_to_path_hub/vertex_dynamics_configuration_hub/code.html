@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Vertex Dynamics - Configure Parameters</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config from Brand Anchors -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary-container": "#646468",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-high": "#e6e8f2",
+                        "surface-tint": "#005bc0",
+                        "primary-container": "#1a73e8",
+                        "inverse-surface": "#2d3038",
+                        "tertiary-fixed": "#ffdbcb",
+                        "primary-fixed": "#d8e2ff",
+                        "background": "#f9f9ff",
+                        "on-primary-fixed": "#001a41",
+                        "surface-container": "#ecedf7",
+                        "error-container": "#ffdad6",
+                        "on-secondary": "#ffffff",
+                        "on-error": "#ffffff",
+                        "on-surface": "#191c23",
+                        "on-tertiary-fixed-variant": "#783100",
+                        "on-primary": "#ffffff",
+                        "on-tertiary-container": "#0e0200",
+                        "surface-dim": "#d8d9e3",
+                        "on-secondary-fixed-variant": "#46474a",
+                        "surface-variant": "#e0e2ec",
+                        "on-background": "#191c23",
+                        "secondary": "#5e5e62",
+                        "on-tertiary": "#ffffff",
+                        "tertiary": "#9e4300",
+                        "surface-container-low": "#f2f3fd",
+                        "primary-fixed-dim": "#adc7ff",
+                        "primary": "#005bbf",
+                        "on-secondary-fixed": "#1a1b1e",
+                        "tertiary-fixed-dim": "#ffb691",
+                        "on-primary-fixed-variant": "#004493",
+                        "on-error-container": "#93000a",
+                        "inverse-on-surface": "#eff0fa",
+                        "surface-container-highest": "#e0e2ec",
+                        "tertiary-container": "#c55500",
+                        "error": "#ba1a1a",
+                        "on-primary-container": "#ffffff",
+                        "secondary-fixed-dim": "#c7c6ca",
+                        "outline-variant": "#c1c6d6",
+                        "on-tertiary-fixed": "#341100",
+                        "on-surface-variant": "#414754",
+                        "secondary-fixed": "#e3e2e6",
+                        "inverse-primary": "#adc7ff",
+                        "surface-bright": "#f9f9ff",
+                        "surface": "#f9f9ff",
+                        "outline": "#727785",
+                        "secondary-container": "#e3e2e6"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "unit": "4px",
+                        "margin-desktop": "24px",
+                        "max-content-width": "1600px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px"
+                    },
+                    "fontFamily": {
+                        "headline-sm": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "code-md": ["JetBrains Mono"],
+                        "headline-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "code-md": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-md h-screen w-full flex overflow-hidden">
+<!-- JSON: SideNavBar (Applying literal style_ classes alongside structural defaults to make it work reasonably if w-[45%] is too extreme, but honoring the request) -->
+<!-- Note: Applying w-[280px] to make it a functional desktop sidebar while applying the JSON classes inside -->
+<aside class="w-[280px] flex-shrink-0 border-r border-outline-variant shadow-sm z-20 flex flex-col pt-4 px-4 gap-2 bg-surface-container-low text-primary">
+<div class="mb-8 px-2">
+<h2 class="font-headline-md text-headline-md text-on-surface">Control Center</h2>
+<p class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider mt-1">Workflow Step</p>
+</div>
+<nav class="flex flex-col gap-1 w-full">
+<!-- Project -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="folder_open">folder_open</span>
+<span class="font-label-md text-label-md">Project</span>
+</a>
+<!-- Calibrate -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="tune">tune</span>
+<span class="font-label-md text-label-md">Calibrate</span>
+</a>
+<!-- Configure (ACTIVE) -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary-container text-on-primary-container font-bold scale-[0.98] duration-150" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="settings_input_component" style="font-variation-settings: 'FILL' 1;">settings_input_component</span>
+<span class="font-label-md text-label-md">Configure</span>
+</a>
+<!-- Preview -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="visibility">visibility</span>
+<span class="font-label-md text-label-md">Preview</span>
+</a>
+<!-- Generate -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="precision_manufacturing">precision_manufacturing</span>
+<span class="font-label-md text-label-md">Generate</span>
+</a>
+<!-- Export & Run -->
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="rocket_launch">rocket_launch</span>
+<span class="font-label-md text-label-md">Export &amp; Run</span>
+</a>
+</nav>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col min-w-0 bg-background h-full overflow-hidden">
+<!-- JSON: TopNavBar -->
+<header class="bg-surface text-primary flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant z-10 flex-shrink-0">
+<div class="flex items-center gap-4">
+<h1 class="font-headline-sm text-headline-sm font-bold text-primary">Vertex Dynamics: Scan-to-Path Hub</h1>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-on-surface-variant hover:bg-surface-container-low transition-colors p-2 rounded-full">
+<span class="material-symbols-outlined" data-icon="sensors">sensors</span>
+</button>
+<button class="text-on-surface-variant hover:bg-surface-container-low transition-colors p-2 rounded-full">
+<span class="material-symbols-outlined" data-icon="cloud_done">cloud_done</span>
+</button>
+</div>
+</header>
+<!-- Split Screen Canvas -->
+<div class="flex-1 flex overflow-hidden p-gutter gap-gutter">
+<!-- Left Panel: Parameter Configuration -->
+<section class="w-1/3 min-w-[320px] flex flex-col gap-6 overflow-y-auto bg-surface border border-outline-variant rounded-xl p-6 shadow-sm">
+<header>
+<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold">Parameter Configuration</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">Adjust core welding variables and select target seam paths.</p>
+</header>
+<div class="h-px bg-outline-variant w-full"></div>
+<!-- Input Group: Weld Type -->
+<div class="flex flex-col gap-2">
+<label class="font-label-md text-label-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="category">category</span>
+                        Weld Type
+                    </label>
+<select class="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-2 font-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary appearance-none">
+<option>MIG Welding</option>
+<option>TIG Welding</option>
+<option>Laser Welding</option>
+</select>
+</div>
+<!-- Input Group: Torch Angle -->
+<div class="flex flex-col gap-2">
+<label class="font-label-md text-label-md text-on-surface flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="rotate_right">rotate_right</span>
+                            Torch Angle
+                        </div>
+<span class="font-code-md text-primary">45°</span>
+</label>
+<div class="flex items-center gap-4">
+<input class="w-full h-2 bg-surface-variant rounded-lg appearance-none cursor-pointer accent-primary" max="90" min="0" type="range" value="45"/>
+</div>
+</div>
+<!-- Input Group: Travel Speed -->
+<div class="flex flex-col gap-2">
+<label class="font-label-md text-label-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="speed">speed</span>
+                        Travel Speed
+                    </label>
+<div class="relative">
+<select class="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-3 py-2 font-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary appearance-none">
+<option selected="">Optimal (Auto-calculated)</option>
+<option>Fast (High Productivity)</option>
+<option>Slow (Deep Penetration)</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="h-px bg-outline-variant w-full my-2"></div>
+<!-- Seam Line Selection Sub-panel -->
+<div class="flex flex-col gap-3 flex-1">
+<h3 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">Seam Line Candidates</h3>
+<div class="flex flex-col gap-2">
+<!-- Active Seam Candidate -->
+<div class="border-2 border-primary bg-primary-container/10 rounded-lg p-3 flex items-center justify-between cursor-pointer transition-colors hover:bg-primary-container/20">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="polyline">polyline</span>
+<div>
+<p class="font-label-md text-label-md text-on-surface font-semibold">Seam_Candidate_01</p>
+<p class="font-code-md text-code-md text-on-surface-variant">Confidence: 98%</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-primary" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<!-- Inactive Seam Candidate -->
+<div class="border border-outline-variant bg-surface-container-lowest rounded-lg p-3 flex items-center justify-between cursor-pointer transition-colors hover:bg-surface-container-low opacity-75">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="polyline">polyline</span>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Seam_Candidate_02</p>
+<p class="font-code-md text-code-md text-on-surface-variant">Confidence: 33%</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Action -->
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-3 rounded-lg flex items-center justify-center gap-2 hover:opacity-90 transition-opacity mt-auto shadow-sm">
+<span class="material-symbols-outlined" data-icon="fact_check">fact_check</span>
+                    Apply &amp; Validate Path
+                </button>
+</section>
+<!-- Right Panel: 3D Viewport -->
+<section class="flex-1 bg-inverse-surface border border-outline-variant rounded-xl relative overflow-hidden flex flex-col shadow-sm">
+<!-- Viewport Header Toolbar -->
+<div class="absolute top-0 w-full p-4 flex justify-between items-center z-10 pointer-events-none">
+<div class="bg-surface/90 backdrop-blur border border-outline-variant rounded-lg px-3 py-1.5 flex items-center gap-2 pointer-events-auto">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+<span class="font-label-md text-label-md text-on-surface">Active Viewport</span>
+</div>
+<div class="flex gap-2 pointer-events-auto">
+<button class="bg-surface/90 backdrop-blur border border-outline-variant rounded-lg p-2 text-on-surface hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="zoom_in">zoom_in</span>
+</button>
+<button class="bg-surface/90 backdrop-blur border border-outline-variant rounded-lg p-2 text-on-surface hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="360">360</span>
+</button>
+<button class="bg-surface/90 backdrop-blur border border-outline-variant rounded-lg p-2 text-on-surface hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-sm" data-icon="layers">layers</span>
+</button>
+</div>
+</div>
+<!-- 3D Visualization Area (Placeholder mapped to design context) -->
+<div class="w-full h-full relative bg-surface-container-high" data-alt="A highly detailed 3D digital point cloud visualization of complex industrial metal parts being scanned for welding. The aesthetic is precision minimalism, utilizing a dark, high-contrast technical environment. Glowing cyan and deep blue trajectory lines intersect over the structural topography. The lighting simulates an advanced CAD software viewport, highlighting mechanical edges." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCXRoURSrp4AXeMyzTeCpznHTtEUBnlsBmg78mVqBGvCVe871Ska75vlfodKrL37ZSNJeaIhcsHUHS0J2cWLGGn2ey4QPWbdDHYJ8Bl7q1SlQ1bscSOpRdfI5F8LipsYtphjskqBYHsxpoN5x7WTAWaf-1mnnuhvEbjMqs1tkJ41ec6ysmbVtIg27-cEUZrAUPZ8zOi9Vp_KeGVKSCLSckoPwqJlT_Hkt_UNZ901r9Z1LGgCzjMEZRdHpmyz8hPlWc9wKrMPtM9Q8I')">
+<!-- Overlay geometric elements to simulate technical UI -->
+<div class="absolute inset-0 flex items-center justify-center mix-blend-overlay opacity-30 pointer-events-none">
+<svg height="100%" width="100%" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<pattern height="40" id="grid" patternunits="userSpaceOnUse" width="40">
+<path d="M 40 0 L 0 0 0 40" fill="none" stroke="#727785" stroke-width="0.5"></path>
+</pattern>
+</defs>
+<rect fill="url(#grid)" height="100%" width="100%"></rect>
+</svg>
+</div>
+<!-- Simulated Path Trajectory Overlay -->
+<svg class="absolute inset-0 w-full h-full pointer-events-none" preserveaspectratio="xMidYMid slice" viewbox="0 0 800 600">
+<path class="animate-[dash_2s_linear_infinite]" d="M 200 400 C 300 350, 450 200, 600 250" fill="none" stroke="#1a73e8" stroke-dasharray="8 4" stroke-width="3"></path>
+<circle cx="200" cy="400" fill="#005bbf" r="6"></circle>
+<circle cx="600" cy="250" fill="#1a73e8" r="6"></circle>
+<circle cx="450" cy="265" fill="#001a41" r="4" stroke="#ffffff" stroke-width="1.5"></circle>
+<!-- Tooltip anchor simulation -->
+<g transform="translate(460, 240)">
+<rect fill="#ffffff" fill-opacity="0.9" height="24" rx="4" width="80" x="0" y="0"></rect>
+<text fill="#191c23" font-family="JetBrains Mono" font-size="10" x="8" y="16">Z: 14.2mm</text>
+</g>
+</svg>
+</div>
+<!-- Viewport Footer Legend -->
+<div class="absolute bottom-0 w-full p-4 flex justify-between items-end pointer-events-none">
+<div class="bg-surface/90 backdrop-blur border border-outline-variant rounded-lg p-3 pointer-events-auto flex flex-col gap-2 min-w-[200px]">
+<div class="flex items-center gap-2">
+<div class="w-3 h-0.5 bg-primary"></div>
+<span class="font-code-md text-xs text-on-surface">Target Path</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-3 h-0.5 bg-outline border border-dashed border-outline-variant"></div>
+<span class="font-code-md text-xs text-on-surface">Scan Boundary</span>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</body></html>

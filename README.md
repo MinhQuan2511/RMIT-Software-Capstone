@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Vertex Dynamics: Scan-to-Path Hub
+## RMIT University Software Capstone Project 2026
 
-## Getting Started
+Next-Generation 3D Vision & Industrial Robot Integration. This is a modular, component-driven React & Next.js prototype designed to simulate scanning, parameter configuration, path previewing, and RAPID code generation for ABB robotic arms.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 🚀 Getting Started
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Follow these steps to run the application locally on your machine.
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+### Prerequisites
+Make sure you have **Node.js** installed:
+*   [Node.js (v18.x or v20.x or v22.x recommended)](https://nodejs.org/)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 📦 Installation
 
-## Learn More
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/MinhQuan2511/RMIT-Software-Capstone.git
+    cd RMIT-Software-Capstone
+    ```
 
-To learn more about Next.js, take a look at the following resources:
+2.  **Install the dependencies:**
+    ```bash
+    npm install
+    ```
+    *(This downloads Axios, Tailwind, Next.js, and other required modules automatically).*
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 💻 Development Server
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1.  **Start the local development server:**
+    ```bash
+    npm run dev
+    ```
 
-## Deploy on Vercel
+2.  **Open the application:**
+    Open your browser and navigate to [http://localhost:3000](http://localhost:3000).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🛠️ Project Layout & Workflow Steps
+
+The repository follows a clean, component-driven directory layout in `/src`:
+
+*   `/src/components` — Contexts (`AuthContext`, `ToastContext`), Global `Navbar`, vertical `Sidebar` navigation, horizontal `StepperProgress`, standard `Active3DViewport` simulation screen, and the `RAPIDCodeEditor`.
+*   `/src/services` — Service layer containing an `axiosClient` configured to interact with simulated API endpoints (`tracerStudioApi`, `robotStudioApi`).
+*   `/src/app` — File-based route paths (`/`, `/login`, `/projects`, `/calibrate`, `/configure`, `/preview`, `/generate`, `/export`).
+*   `tailwind.config.js` — Centrally managed theme styling rules.
+
+---
+
+## 🔐 Mock Credentials (For Local Sign-In)
+
+Any non-empty inputs will bypass mock authentication. You can sign in using:
+*   **Role**: Standard Operator
+    *   **Operator ID**: `OP-7724`
+    *   **Security PIN**: `1234`
+*   **Role**: System Engineer
+    *   **Engineer Email**: `engineer@vertex.com`
+    *   **System Password**: `password`

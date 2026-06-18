@@ -1,26 +1,176 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-on-secondary-container: #646468;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-high: #e6e8f2;
+  --color-surface-tint: #005bc0;
+  --color-primary-container: #1a73e8;
+  --color-inverse-surface: #2d3038;
+  --color-tertiary-fixed: #ffdbcb;
+  --color-primary-fixed: #d8e2ff;
+  --color-background: #f9f9ff;
+  --color-on-primary-fixed: #001a41;
+  --color-surface-container: #ecedf7;
+  --color-error-container: #ffdad6;
+  --color-on-secondary: #ffffff;
+  --color-on-error: #ffffff;
+  --color-on-surface: #191c23;
+  --color-on-tertiary-fixed-variant: #783100;
+  --color-on-primary: #ffffff;
+  --color-on-tertiary-container: #0e0200;
+  --color-surface-dim: #d8d9e3;
+  --color-on-secondary-fixed-variant: #46474a;
+  --color-surface-variant: #e0e2ec;
+  --color-on-background: #191c23;
+  --color-secondary: #5e5e62;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary: #9e4300;
+  --color-surface-container-low: #f2f3fd;
+  --color-primary-fixed-dim: #adc7ff;
+  --color-primary: #005bbf;
+  --color-on-secondary-fixed: #1a1b1e;
+  --color-tertiary-fixed-dim: #ffb691;
+  --color-on-primary-fixed-variant: #004493;
+  --color-on-error-container: #93000a;
+  --color-inverse-on-surface: #eff0fa;
+  --color-surface-container-highest: #e0e2ec;
+  --color-tertiary-container: #c55500;
+  --color-error: #ba1a1a;
+  --color-on-primary-container: #ffffff;
+  --color-secondary-fixed-dim: #c7c6ca;
+  --color-outline-variant: #c1c6d6;
+  --color-on-tertiary-fixed: #341100;
+  --color-on-surface-variant: #414754;
+  --color-secondary-fixed: #e3e2e6;
+  --color-inverse-primary: #adc7ff;
+  --color-surface-bright: #f9f9ff;
+  --color-surface: #f9f9ff;
+  --color-outline: #727785;
+  --color-secondary-container: #e3e2e6;
+
+  --radius-default: 0.125rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.5rem;
+  --radius-full: 0.75rem;
+
+  --spacing-unit: 4px;
+  --spacing-margin-desktop: 24px;
+  --spacing-max-content-width: 1600px;
+  --spacing-margin-mobile: 16px;
+  --spacing-gutter: 16px;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* === BASE RESETS & SCROLLBAR === */
+* {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  background-color: var(--color-background);
+  color: var(--color-on-background);
+  overflow: hidden;
+  height: 100vh;
+  width: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c1c6d6;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #727785;
+}
+
+.code-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.code-scroll::-webkit-scrollbar-track {
+  background: #2d3038;
+}
+.code-scroll::-webkit-scrollbar-thumb {
+  background: #646468;
+  border-radius: 4px;
+}
+.code-scroll::-webkit-scrollbar-thumb:hover {
+  background: #e3e2e6;
+}
+
+/* === TECHNICAL DESIGN BG/GRID EFFECTS === */
+.tech-grid {
+  background-size: 48px 48px;
+  background-image:
+    linear-gradient(to right, rgba(193, 198, 214, 0.3) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(193, 198, 214, 0.3) 1px, transparent 1px);
+}
+
+.bg-3d-viewport {
+  background-color: #1e2329;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.viewport-grid {
+  background-image:
+    linear-gradient(to right, #414754 1px, transparent 1px),
+    linear-gradient(to bottom, #414754 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: center center;
+  opacity: 0.15;
+}
+
+.glowing-badge {
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+}
+
+/* === CUSTOM TRANSITIONS & KEYFRAMES === */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-entrance {
+  animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toastSlideIn {
+  0%   { opacity: 0; transform: translateX(60px) translateY(-10px); }
+  100% { opacity: 1; transform: translateX(0) translateY(0); }
+}
+@keyframes toastSlideOut {
+  0%   { opacity: 1; transform: translateX(0) translateY(0); }
+  100% { opacity: 0; transform: translateX(60px) translateY(-10px); }
+}
+
+.toast-slide-in {
+  animation: toastSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.toast-slide-out {
+  animation: toastSlideOut 0.35s ease-in forwards;
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeInDown 0.3s ease-out forwards;
 }

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Vertex Dynamics - Workspace</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary-container": "#646468",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-high": "#e6e8f2",
+                        "surface-tint": "#005bc0",
+                        "primary-container": "#1a73e8",
+                        "inverse-surface": "#2d3038",
+                        "tertiary-fixed": "#ffdbcb",
+                        "primary-fixed": "#d8e2ff",
+                        "background": "#f9f9ff",
+                        "on-primary-fixed": "#001a41",
+                        "surface-container": "#ecedf7",
+                        "error-container": "#ffdad6",
+                        "on-secondary": "#ffffff",
+                        "on-error": "#ffffff",
+                        "on-surface": "#191c23",
+                        "on-tertiary-fixed-variant": "#783100",
+                        "on-primary": "#ffffff",
+                        "on-tertiary-container": "#0e0200",
+                        "surface-dim": "#d8d9e3",
+                        "on-secondary-fixed-variant": "#46474a",
+                        "surface-variant": "#e0e2ec",
+                        "on-background": "#191c23",
+                        "secondary": "#5e5e62",
+                        "on-tertiary": "#ffffff",
+                        "tertiary": "#9e4300",
+                        "surface-container-low": "#f2f3fd",
+                        "primary-fixed-dim": "#adc7ff",
+                        "primary": "#005bbf",
+                        "on-secondary-fixed": "#1a1b1e",
+                        "tertiary-fixed-dim": "#ffb691",
+                        "on-primary-fixed-variant": "#004493",
+                        "on-error-container": "#93000a",
+                        "inverse-on-surface": "#eff0fa",
+                        "surface-container-highest": "#e0e2ec",
+                        "tertiary-container": "#c55500",
+                        "error": "#ba1a1a",
+                        "on-primary-container": "#ffffff",
+                        "secondary-fixed-dim": "#c7c6ca",
+                        "outline-variant": "#c1c6d6",
+                        "on-tertiary-fixed": "#341100",
+                        "on-surface-variant": "#414754",
+                        "secondary-fixed": "#e3e2e6",
+                        "inverse-primary": "#adc7ff",
+                        "surface-bright": "#f9f9ff",
+                        "surface": "#f9f9ff",
+                        "outline": "#727785",
+                        "secondary-container": "#e3e2e6"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "unit": "4px",
+                        "margin-desktop": "24px",
+                        "max-content-width": "1600px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px"
+                    },
+                    "fontFamily": {
+                        "headline-sm": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "code-md": ["JetBrains Mono"],
+                        "headline-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "500" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "code-md": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: #f8f9fa; }
+    </style>
+</head>
+<body class="h-screen w-full flex flex-col bg-background font-body-md text-body-md text-on-background overflow-hidden">
+<!-- TopNavBar -->
+<header class="bg-surface flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant full-width top-0 z-50">
+<div class="flex items-center">
+<span class="font-headline-sm text-headline-sm font-bold text-primary mr-4">Vertex Dynamics: Scan-to-Path Hub</span>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-primary hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center opacity-80 scale-95 transition-transform">
+<span class="material-symbols-outlined" data-weight="fill" style="font-variation-settings: 'FILL' 1;">sensors</span>
+</button>
+<button class="text-primary hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center opacity-80 scale-95 transition-transform">
+<span class="material-symbols-outlined" data-weight="fill" style="font-variation-settings: 'FILL' 1;">cloud_done</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden w-full">
+<!-- SideNavBar -->
+<nav class="bg-surface-container-low flex flex-col w-[240px] md:w-[280px] lg:w-[320px] h-full pt-4 px-4 gap-2 border-r border-outline-variant shadow-sm z-40 shrink-0">
+<div class="mb-6 px-4">
+<h2 class="font-headline-md text-headline-md text-on-surface">Control Center</h2>
+<p class="font-label-md text-label-md text-on-surface-variant uppercase mt-1 tracking-wider">Workflow Step</p>
+</div>
+<ul class="flex flex-col gap-1 w-full">
+<!-- Active Tab: Project -->
+<li>
+<a class="flex items-center gap-3 px-4 py-3 bg-primary-container text-on-primary-container rounded-lg font-bold hover:bg-secondary-container transition-all scale-[0.98] duration-150" href="#">
+<span class="material-symbols-outlined">folder_open</span>
+<span class="font-label-md text-label-md">Project</span>
+</a>
+</li>
+<!-- Inactive Tabs -->
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined">tune</span>
+<span class="font-label-md text-label-md">Calibrate</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined">settings_input_component</span>
+<span class="font-label-md text-label-md">Configure</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined">visibility</span>
+<span class="font-label-md text-label-md">Preview</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined">precision_manufacturing</span>
+<span class="font-label-md text-label-md">Generate</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-secondary-container transition-all" href="#">
+<span class="material-symbols-outlined">rocket_launch</span>
+<span class="font-label-md text-label-md">Export &amp; Run</span>
+</a>
+</li>
+</ul>
+</nav>
+<!-- Main Content Canvas -->
+<main class="flex-1 bg-background overflow-y-auto p-margin-desktop w-full">
+<div class="max-w-[1600px] mx-auto w-full">
+<header class="mb-8 flex justify-between items-end">
+<div>
+<h1 class="font-headline-lg text-headline-lg text-on-surface mb-2">Workspace</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant">Select an active project to continue or create a new scan configuration.</p>
+</div>
+</header>
+<!-- Project Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-gutter">
+<!-- Create New Action Card -->
+<button class="flex flex-col items-center justify-center min-h-[280px] bg-surface-container-lowest border-2 border-dashed border-outline hover:border-primary hover:bg-surface-container-low transition-all duration-200 rounded-xl group p-6">
+<div class="w-16 h-16 rounded-full bg-primary-fixed flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-on-primary-fixed text-3xl">add</span>
+</div>
+<span class="font-headline-sm text-headline-sm text-on-surface font-semibold">Create New Scan Project</span>
+<span class="font-body-md text-body-md text-on-surface-variant mt-2 text-center">Start a new workflow from a fresh scan or imported point cloud data.</span>
+</button>
+<!-- Project Card 1 -->
+<div class="flex flex-col bg-surface-container-lowest border border-outline-variant shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden cursor-pointer group">
+<div class="h-48 w-full relative bg-surface-container-high overflow-hidden" data-alt="A highly detailed 3D CAD rendering of a complex industrial metal bracket with visible fillet welds. The part is rendered in a sleek, neutral grey material with subtle reflections, situated in a minimalist, brightly lit virtual studio environment. The aesthetic is clean, precise, and high-tech, reflecting advanced engineering software interface with a light mode color palette focusing on whites, greys, and a touch of industrial blue lighting accent." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAA6JmPnfOlEYR3Ha604Ac5N0ItXcPxazqiTt2jzHTbsYlAOZBUkTpW7-GOWNOZ5K9lXZYiwjMOo_dFyTfvQGATWjavgsgleM68Wsv_SKz_E-Lx6Fa_iI2FDv___nfMk0a-5p49QZ8UE1kKVzNYD8SsdjlgoBJr7gPeuI0ej9VXRR4qbtyQVYbZ1kOud6vD5wmEFWllsLr2KYbBf_3yiFHkDbYPcrOJbWggtOFye7cOzefSWlDvBtdtJsndL6HBxRbZZDdwfF8kESo')">
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+<div class="absolute top-3 right-3 bg-surface text-on-surface px-2 py-1 rounded-DEFAULT font-label-md text-label-md flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                Ready
+                            </div>
+</div>
+<div class="p-5 flex-1 flex flex-col justify-between">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface font-semibold mb-1 group-hover:text-primary transition-colors">Part_A_Fillet_Weld</h3>
+<p class="font-code-md text-code-md text-on-surface-variant flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px]">folder</span>
+                                    /project/robotic_cell_1/
+                                </p>
+</div>
+<div class="mt-4 flex justify-between items-center pt-4 border-t border-outline-variant">
+<span class="font-body-md text-body-md text-on-surface-variant">Modified: Today, 10:42 AM</span>
+<button class="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Project Card 2 -->
+<div class="flex flex-col bg-surface-container-lowest border border-outline-variant shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden cursor-pointer group">
+<div class="h-48 w-full relative bg-surface-container-high overflow-hidden" data-alt="A precise, high-contrast point cloud visualization of a structural lap joint assembly. The data points are dense and vividly colored in a thermal gradient (blues to reds) to indicate surface deviation, set against a stark, pure white background typical of a modern engineering software light-mode interface. The visualization feels deeply technical, analytical, and meticulously accurate, conveying a sense of rigorous quality control and robotic path planning." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCMKIJZXUbYnty4g1bPA9LVSREF3xOd9fifXZ-MYHWcQjzlT0Lqw1Wy8cKXK6xi6UZp1yFnH_QcVisFORiFk1t_Ea4VCIjrfIpJKovUZTW4YaWAgAocbMeap-thfkrOYKrCZrbdivSyoEoCC6v-9Pqn-UWwrpfs2LtfaoxOkGTL21-WFf4hFMc_g60A4aQELwfxfc4vq8RjNDaQh4l_27w4HDniWbX0-kq_m7DSk9ovto32_6_M8GbnP7v2PnEhg6T95vHls876QSg')">
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
+<div class="absolute top-3 right-3 bg-surface text-on-surface px-2 py-1 rounded-DEFAULT font-label-md text-label-md flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                                Draft
+                            </div>
+</div>
+<div class="p-5 flex-1 flex flex-col justify-between">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface font-semibold mb-1 group-hover:text-primary transition-colors">Bracket_B_Lap_Joint</h3>
+<p class="font-code-md text-code-md text-on-surface-variant flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px]">folder</span>
+                                    /project/assembly_line_3/
+                                </p>
+</div>
+<div class="mt-4 flex justify-between items-center pt-4 border-t border-outline-variant">
+<span class="font-body-md text-body-md text-on-surface-variant">Modified: Oct 24, 2:15 PM</span>
+<button class="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>
