@@ -1,6 +1,7 @@
 import "./globals.css";
 import { AuthProvider } from "@/components/AuthContext";
 import { ToastProvider } from "@/components/ToastContext";
+import { IntegrationModeProvider } from "@/components/IntegrationModeContext";
 import Navbar from "@/components/Navbar";
 
 export const metadata = {
@@ -26,13 +27,15 @@ export default function RootLayout({ children }) {
       </head>
       <body className="bg-background text-on-background antialiased overflow-hidden h-screen w-screen flex flex-col">
         <AuthProvider>
-          <ToastProvider>
-            {/* Global Navbar appears on authenticated views */}
-            <Navbar />
-            <div className="flex-1 flex overflow-hidden w-full h-full relative">
-              {children}
-            </div>
-          </ToastProvider>
+          <IntegrationModeProvider>
+            <ToastProvider>
+              {/* Global Navbar appears on authenticated views */}
+              <Navbar />
+              <div className="flex-1 flex overflow-hidden w-full h-full relative">
+                {children}
+              </div>
+            </ToastProvider>
+          </IntegrationModeProvider>
         </AuthProvider>
       </body>
     </html>

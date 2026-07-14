@@ -3,11 +3,43 @@
 import React from "react";
 import Link from "next/link";
 import { useAuth } from "./AuthContext";
+import { useIntegrationMode } from "./IntegrationModeContext";
+import { useTcpWorkflow } from "./TcpWorkflowContext";
+import IntegrationModeSwitch from "./IntegrationModeSwitch";
 
 export default function Navbar() {
   const { user, logout, isAuthenticated } = useAuth();
+  const { mode, tracerStatus } = useIntegrationMode();
+  const { connectionStatus } = useTcpWorkflow();
 
   if (!isAuthenticated) return null;
+
+  // Determine TracerStudio badge display
+  let tracerBadge;
+  if (mode === "api") {
+    tracerBadge = {
+      label: "TracerStudio API",
+      status: "Connected",
+      color: "green",
+    };
+  } else {
+    // TCP mode
+    if (connectionStatus === "connected") {
+      tracerBadge = {
+        label: "TracerStudio Bridge",
+        status: "Online",
+        color: "green",
+      };
+    } else {
+      tracerBadge = {
+        label: "TracerStudio Bridge",
+        status: "Idle",
+        color: "gray",
+      };
+    }
+  }
+
+  const statusDotColor = tracerBadge.color === "green" ? "bg-green-500" : "bg-gray-400";
 
   return (
     <header className="bg-surface flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant shrink-0 z-50 sticky top-0">
@@ -25,11 +57,15 @@ export default function Navbar() {
       </Link>
 
       {/* Middle/Right Status & Profile Controls */}
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-4 lg:gap-6">
+        {/* Mode Switch */}
+        <IntegrationModeSwitch />
+
+        {/* Status Badges */}
         <div className="hidden lg:flex items-center gap-3">
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-container-high border border-outline-variant text-[11px] font-semibold">
-            <div className="w-2 h-2 rounded-full bg-green-500 glowing-badge"></div>
-            <span className="font-label-md text-on-surface">Tracer Studio API: Connected</span>
+            <div className={`w-2 h-2 rounded-full ${statusDotColor} glowing-badge`}></div>
+            <span className="font-label-md text-on-surface">{tracerBadge.label}: {tracerBadge.status}</span>
           </div>
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-container-high border border-outline-variant text-[11px] font-semibold">
             <div className="w-2 h-2 rounded-full bg-green-500 glowing-badge"></div>
@@ -39,10 +75,10 @@ export default function Navbar() {
 
         {/* Quick action icons */}
         <div className="flex items-center gap-2 text-primary">
-          <button className="hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center" title="Sensor Status">
+          <button className="hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center" title="Sensor Status" aria-label="Sensor Status">
             <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>sensors</span>
           </button>
-          <button className="hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center" title="Cloud Synced">
+          <button className="hover:bg-surface-container-low transition-colors p-2 rounded-full flex items-center justify-center" title="Cloud Synced" aria-label="Cloud Synced">
             <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>cloud_done</span>
           </button>
         </div>
@@ -58,6 +94,7 @@ export default function Navbar() {
               onClick={logout}
               className="bg-surface-container-high hover:bg-error-container hover:text-on-error-container text-on-surface-variant px-3 py-1.5 rounded-lg font-label-md text-xs font-bold transition-all duration-200 flex items-center gap-1.5 border border-outline-variant/50"
               title="Log Out Session"
+              aria-label="Log Out Session"
             >
               <span className="material-symbols-outlined text-[14px]">logout</span>
               Log Out

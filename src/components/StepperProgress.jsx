@@ -3,26 +3,22 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const STEPS = [
-  { path: "/projects", label: "Project" },
-  { path: "/calibrate", label: "Calibrate" },
-  { path: "/configure", label: "Configure" },
-  { path: "/preview", label: "Preview" },
-  { path: "/generate", label: "Generate" },
-  { path: "/export", label: "Export & Run" },
-];
+import { useIntegrationMode } from "./IntegrationModeContext";
 
 export default function StepperProgress() {
   const pathname = usePathname();
-  const activeIndex = STEPS.findIndex((s) => s.path === pathname);
+  const { workflowSteps } = useIntegrationMode();
+  const activeIndex = workflowSteps.findIndex((s) => s.path === pathname);
+
+  // Determine if we need compressed mode for many steps
+  const isCompressed = workflowSteps.length > 6;
 
   return (
-    <div className="mb-8 px-2 flex items-center justify-between relative select-none w-full max-w-xl mx-auto">
+    <div className={`mb-8 px-2 flex items-center justify-between relative select-none w-full ${isCompressed ? 'max-w-2xl' : 'max-w-xl'} mx-auto overflow-x-auto`}>
       {/* Background Connecting Line */}
       <div className="absolute left-0 top-[18px] w-full h-[2px] bg-outline-variant/60 -z-10"></div>
 
-      {STEPS.map((step, idx) => {
+      {workflowSteps.map((step, idx) => {
         const isCompleted = idx < activeIndex;
         const isActive = idx === activeIndex;
 
@@ -31,7 +27,7 @@ export default function StepperProgress() {
             {/* Step Node */}
             <Link 
               href={step.path}
-              className="stepper-step flex flex-col items-center gap-1.5 focus:outline-none"
+              className="stepper-step flex flex-col items-center gap-1.5 focus:outline-none shrink-0"
             >
               {isCompleted ? (
                 // Completed State
@@ -65,9 +61,9 @@ export default function StepperProgress() {
             </Link>
 
             {/* Connecting line between steps */}
-            {idx < STEPS.length - 1 && (
+            {idx < workflowSteps.length - 1 && (
               <div
-                className={`flex-1 h-[2.5px] mx-1 -translate-y-[10px] -z-10 ${
+                className={`flex-1 h-[2.5px] mx-1 -translate-y-[10px] -z-10 shrink-0 ${
                   isCompleted ? "bg-primary" : "bg-outline-variant/60"
                 }`}
               ></div>

@@ -3,18 +3,11 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const STEPS = [
-  { path: "/projects", label: "Project", icon: "folder_open" },
-  { path: "/calibrate", label: "Calibrate", icon: "tune" },
-  { path: "/configure", label: "Configure", icon: "settings_input_component" },
-  { path: "/preview", label: "Preview", icon: "visibility" },
-  { path: "/generate", label: "Generate", icon: "precision_manufacturing" },
-  { path: "/export", label: "Export & Run", icon: "rocket_launch" },
-];
+import { useIntegrationMode } from "./IntegrationModeContext";
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { workflowSteps } = useIntegrationMode();
 
   return (
     <nav className="bg-surface-container-low flex flex-col w-[280px] h-full pt-6 px-4 gap-2 border-r border-outline-variant shadow-sm z-40 shrink-0 select-none">
@@ -26,7 +19,7 @@ export default function Sidebar() {
       </div>
       
       <ul className="flex flex-col gap-1.5 w-full">
-        {STEPS.map((step) => {
+        {workflowSteps.map((step) => {
           const isActive = pathname === step.path;
           return (
             <li key={step.path}>

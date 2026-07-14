@@ -6,6 +6,7 @@ import StepperProgress from "@/components/StepperProgress";
 import Active3DViewport from "@/components/Active3DViewport";
 import RAPIDCodeEditor from "@/components/RAPIDCodeEditor";
 import { useToast } from "@/components/ToastContext";
+import { useIntegrationMode } from "@/components/IntegrationModeContext";
 
 const MOCK_RAPID_CODE = `MODULE CalibModule
   CONST robtarget p_home := [[500,0,500],[1,0,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];
@@ -28,6 +29,7 @@ ENDMODULE`;
 
 export default function GeneratePage() {
   const { showToast } = useToast();
+  const { mode } = useIntegrationMode();
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(30);
 
@@ -42,6 +44,11 @@ export default function GeneratePage() {
     }
   };
 
+  // Mode-aware subtitle
+  const subtitle = mode === "tcp"
+    ? "Compile the validated canonical weld path received through the TCP bridge into an industrial-standard ABB RAPID module."
+    : "Compile the filtered point cloud points and configurations into industrial-standard ABB RAPID modules.";
+
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full relative">
       {/* Left Sidebar Panel (45%) */}
@@ -51,7 +58,7 @@ export default function GeneratePage() {
             RAPID Code Compiler
           </h2>
           <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
-            Compile the filtered point cloud points and configurations into industrial-standard ABB RAPID modules.
+            {subtitle}
           </p>
         </div>
 

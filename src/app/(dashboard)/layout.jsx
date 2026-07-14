@@ -1,19 +1,32 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthContext";
-import { useRouter } from "next/navigation";
+import { useIntegrationMode } from "@/components/IntegrationModeContext";
+import { TcpWorkflowProvider } from "@/components/TcpWorkflowContext";
+import { IntegrationModeProvider } from "@/components/IntegrationModeContext";
+import { VALID_ROUTES } from "@/config/workflows";
+import { useRouter, usePathname } from "next/navigation";
 
-export default function DashboardLayout({ children }) {
+function DashboardContent({ children }) {
   const { isAuthenticated } = useAuth();
+  const { mode, validRoutes } = useIntegrationMode();
   const router = useRouter();
+  const pathname = usePathname();
 
   // If not authenticated, the AuthContext will handle redirecting, 
   // but we should avoid rendering the sidebar frame briefly.
   if (!isAuthenticated) {
     return null;
   }
+
+  // Route guard: if current route is not valid in this mode, redirect to /projects
+  useEffect(() => {
+    if (pathname && !validRoutes.has(pathname)) {
+      router.push("/projects");
+    }
+  }, [pathname, validRoutes, router]);
 
   return (
     <div className="flex flex-1 overflow-hidden w-full h-full relative">
@@ -25,5 +38,13 @@ export default function DashboardLayout({ children }) {
         {children}
       </div>
     </div>
+  );
+}
+
+export default function DashboardLayout({ children }) {
+  return (
+    <TcpWorkflowProvider>
+      <DashboardContent>{children}</DashboardContent>
+    </TcpWorkflowProvider>
   );
 }
