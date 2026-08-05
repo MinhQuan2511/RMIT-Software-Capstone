@@ -81,6 +81,31 @@ export const WORKFLOWS = {
       },
     ],
   },
+  testing: {
+    label: "Testing",
+    steps: [
+      {
+        path: "/testing-upload",
+        label: "Upload",
+        icon: "upload_file",
+      },
+      {
+        path: "/testing-preview",
+        label: "Preview Path",
+        icon: "visibility",
+      },
+      {
+        path: "/generate",
+        label: "Generate",
+        icon: "precision_manufacturing",
+      },
+      {
+        path: "/export",
+        label: "Export & Run",
+        icon: "rocket_launch",
+      },
+    ],
+  },
 };
 
 /**
@@ -89,10 +114,11 @@ export const WORKFLOWS = {
 export const VALID_ROUTES = {
   api: new Set(["/projects", "/calibrate", "/configure", "/preview", "/generate", "/export"]),
   tcp: new Set(["/projects", "/bridge-setup", "/connect", "/acquire", "/parse-map", "/generate", "/export"]),
+  testing: new Set(["/testing-upload", "/testing-preview", "/generate", "/export"]),
 };
 
 /**
- * Shared routes valid in both modes.
+ * Shared routes valid in all modes.
  */
 export const SHARED_ROUTES = new Set(["/projects", "/generate", "/export"]);
 

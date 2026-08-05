@@ -11,7 +11,7 @@ const DEFAULT_MODE = "api";
 function getInitialMode() {
   try {
     const stored = typeof window !== "undefined" && localStorage.getItem(STORAGE_KEY);
-    if (stored === "api" || stored === "tcp") return stored;
+    if (stored === "api" || stored === "tcp" || stored === "testing") return stored;
   } catch {
     // localStorage unavailable
   }
@@ -24,7 +24,7 @@ export function IntegrationModeProvider({ children }) {
   const [isHydrated] = useState(true);
 
   const setMode = useCallback((newMode) => {
-    if (newMode !== "api" && newMode !== "tcp") return;
+    if (newMode !== "api" && newMode !== "tcp" && newMode !== "testing") return;
     try {
       localStorage.setItem(STORAGE_KEY, newMode);
     } catch {
@@ -37,9 +37,14 @@ export function IntegrationModeProvider({ children }) {
   const validRoutes = getValidRoutes(mode);
 
   // tracerStatus is derived from mode and TCP connection state
-  const tracerStatus = mode === "api"
-    ? { label: "TracerStudio API", status: "Connected", color: "green" }
-    : { label: "TracerStudio Bridge", status: "Idle", color: "gray" };
+  let tracerStatus;
+  if (mode === "api") {
+    tracerStatus = { label: "TracerStudio API", status: "Connected", color: "green" };
+  } else if (mode === "testing") {
+    tracerStatus = { label: "Testing Mode", status: "Active", color: "amber" };
+  } else {
+    tracerStatus = { label: "TracerStudio Bridge", status: "Idle", color: "gray" };
+  }
 
   const value = {
     mode,
@@ -69,16 +74,9 @@ export function useIntegrationMode() {
       mode: "api",
       setMode: () => {},
       isHydrated: true,
-      workflowSteps: [
-        { path: "/projects", label: "Project", icon: "folder" },
-        { path: "/calibrate", label: "Calibrate", icon: "tune" },
-        { path: "/configure", label: "Configure", icon: "sliders" },
-        { path: "/preview", label: "Preview", icon: "visibility" },
-        { path: "/generate", label: "Generate", icon: "precision_manufacturing" },
-        { path: "/export", label: "Export & Run", icon: "rocket_launch" },
-      ],
-      validRoutes: new Set(["/projects", "/calibrate", "/configure", "/preview", "/generate", "/export"]),
-      SHARED_ROUTES: new Set(["/projects", "/generate", "/export"]),
+      workflowSteps: getWorkflowSteps("api"),
+      validRoutes: getValidRoutes("api"),
+      SHARED_ROUTES,
       tracerStatus: { label: "TracerStudio API", status: "Connected", color: "green" },
     };
   }

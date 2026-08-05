@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthContext";
 import { useIntegrationMode } from "@/components/IntegrationModeContext";
 import { TcpWorkflowProvider } from "@/components/TcpWorkflowContext";
+import { TestingWorkflowProvider } from "@/components/TestingWorkflowContext";
 import { IntegrationModeProvider } from "@/components/IntegrationModeContext";
 import { VALID_ROUTES } from "@/config/workflows";
 import { useRouter, usePathname } from "next/navigation";
@@ -44,7 +45,9 @@ function DashboardContent({ children }) {
 export default function DashboardLayout({ children }) {
   return (
     <TcpWorkflowProvider>
-      <DashboardContent>{children}</DashboardContent>
+      <TestingWorkflowProvider>
+        <DashboardContent>{children}</DashboardContent>
+      </TestingWorkflowProvider>
     </TcpWorkflowProvider>
   );
 }

@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import Link from "next/link";
 import StepperProgress from "@/components/StepperProgress";
 import Active3DViewport from "@/components/Active3DViewport";
 import RAPIDCodeEditor from "@/components/RAPIDCodeEditor";
 import { useToast } from "@/components/ToastContext";
 import { useIntegrationMode } from "@/components/IntegrationModeContext";
+import { useTestingWorkflow } from "@/components/TestingWorkflowContext";
+import { csvToRapid } from "@/services/csvToRapid";
 
 const MOCK_RAPID_CODE = `MODULE CalibModule
   CONST robtarget p_home := [[500,0,500],[1,0,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];
@@ -30,8 +32,22 @@ ENDMODULE`;
 export default function GeneratePage() {
   const { showToast } = useToast();
   const { mode } = useIntegrationMode();
+  const { csvData } = useTestingWorkflow();
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(30);
+
+  // Generate RAPID code from CSV when in testing mode
+  const testingRapidCode = useMemo(() => {
+    if (mode === "testing" && csvData && csvData.length > 0) {
+      return csvToRapid(csvData);
+    }
+    return null;
+  }, [mode, csvData]);
+
+  // Choose the right code to display
+  const displayCode = mode === "testing" && testingRapidCode
+    ? testingRapidCode
+    : MOCK_RAPID_CODE;
 
   const handleTogglePlay = () => {
     setIsPlaying(!isPlaying);
@@ -45,9 +61,20 @@ export default function GeneratePage() {
   };
 
   // Mode-aware subtitle
-  const subtitle = mode === "tcp"
-    ? "Compile the validated canonical weld path received through the TCP bridge into an industrial-standard ABB RAPID module."
-    : "Compile the filtered point cloud points and configurations into industrial-standard ABB RAPID modules.";
+  let subtitle;
+  if (mode === "testing") {
+    subtitle = csvData && csvData.length > 0
+      ? `Generating RAPID code from ${csvData.length} CSV welding coordinates. Review the compiled module below.`
+      : "No CSV data loaded. Please go back to the Upload step first.";
+  } else if (mode === "tcp") {
+    subtitle = "Compile the validated canonical weld path received through the TCP bridge into an industrial-standard ABB RAPID module.";
+  } else {
+    subtitle = "Compile the filtered point cloud points and configurations into industrial-standard ABB RAPID modules.";
+  }
+
+  // Mode-aware back link
+  const backHref = mode === "testing" ? "/testing-preview" : "/preview";
+  const backLabel = mode === "testing" ? "< Back to Preview Path" : "< Back to Preview";
 
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full relative">
@@ -70,18 +97,18 @@ export default function GeneratePage() {
         {/* Code Output panel */}
         <div className="flex-1 flex flex-col gap-4 min-h-0">
           <RAPIDCodeEditor 
-            code={MOCK_RAPID_CODE} 
-            title="ABB RAPID MODULE PREVIEW" 
-            status="COMPILED OK" 
+            code={displayCode} 
+            title={mode === "testing" ? "ABB RAPID MODULE — CSV GENERATED" : "ABB RAPID MODULE PREVIEW"} 
+            status={mode === "testing" && testingRapidCode ? `COMPILED OK — ${csvData.length} POINTS` : "COMPILED OK"} 
           />
           
           <div className="flex gap-4 select-none pb-4">
             <Link
-              href="/preview"
+              href={backHref}
               className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-              &lt; Back to Preview
+              {backLabel}
             </Link>
             
             <Link

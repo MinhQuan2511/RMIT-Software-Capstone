@@ -6,10 +6,14 @@ import { useIntegrationMode } from "./IntegrationModeContext";
 export default function IntegrationModeSwitch() {
   const { mode, setMode } = useIntegrationMode();
 
+  const modes = ["api", "tcp", "testing"];
+
   const handleKeyDown = (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      setMode(mode === "api" ? "tcp" : "api");
+      const currentIndex = modes.indexOf(mode);
+      const nextIndex = (currentIndex + 1) % modes.length;
+      setMode(modes[nextIndex]);
     }
   };
 
@@ -48,6 +52,21 @@ export default function IntegrationModeSwitch() {
         }`}
       >
         TracerStudio: TCP
+      </button>
+      <button
+        role="tab"
+        aria-selected={mode === "testing"}
+        aria-label="Testing mode"
+        tabIndex={mode === "testing" ? 0 : -1}
+        onClick={() => setMode("testing")}
+        onKeyDown={handleKeyDown}
+        className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all duration-200 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:ring-offset-1 focus:ring-offset-background ${
+          mode === "testing"
+            ? "bg-amber-500 text-white shadow-sm"
+            : "text-on-surface-variant hover:text-on-surface"
+        }`}
+      >
+        Testing
       </button>
     </div>
   );

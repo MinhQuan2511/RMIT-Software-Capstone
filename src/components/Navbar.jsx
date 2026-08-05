@@ -22,6 +22,12 @@ export default function Navbar() {
       status: "Connected",
       color: "green",
     };
+  } else if (mode === "testing") {
+    tracerBadge = {
+      label: "Testing Mode",
+      status: "Active",
+      color: "amber",
+    };
   } else {
     // TCP mode
     if (connectionStatus === "connected") {
@@ -39,7 +45,11 @@ export default function Navbar() {
     }
   }
 
-  const statusDotColor = tracerBadge.color === "green" ? "bg-green-500" : "bg-gray-400";
+  const statusDotColor = tracerBadge.color === "green"
+    ? "bg-green-500"
+    : tracerBadge.color === "amber"
+    ? "bg-amber-500"
+    : "bg-gray-400";
 
   return (
     <header className="bg-surface flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant shrink-0 z-50 sticky top-0">
