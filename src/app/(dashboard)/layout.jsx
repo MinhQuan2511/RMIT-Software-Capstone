@@ -16,18 +16,20 @@ function DashboardContent({ children }) {
   const router = useRouter();
   const pathname = usePathname();
 
+  // Route guard: if current route is not valid in this mode, redirect
+  // Must be declared before any early returns to satisfy Rules of Hooks.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (pathname && !validRoutes.has(pathname)) {
+      router.push("/projects");
+    }
+  }, [pathname, validRoutes, router, isAuthenticated]);
+
   // If not authenticated, the AuthContext will handle redirecting, 
   // but we should avoid rendering the sidebar frame briefly.
   if (!isAuthenticated) {
     return null;
   }
-
-  // Route guard: if current route is not valid in this mode, redirect to /projects
-  useEffect(() => {
-    if (pathname && !validRoutes.has(pathname)) {
-      router.push("/projects");
-    }
-  }, [pathname, validRoutes, router]);
 
   return (
     <div className="flex flex-1 overflow-hidden w-full h-full relative">

@@ -3,9 +3,13 @@
 import React, { useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import StepperProgress from "@/components/StepperProgress";
 import { useToast } from "@/components/ToastContext";
 import { useTestingWorkflow } from "@/components/TestingWorkflowContext";
+
+const ACCEPTED_EXTENSIONS = [".csv", ".xlsx", ".xls"];
+const ACCEPT_STRING = ".csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
 
 /**
  * Parse a CSV string into an array of objects.
@@ -31,6 +35,40 @@ function parseCsv(text) {
   return rows;
 }
 
+/**
+ * Parse an Excel ArrayBuffer into an array of objects using SheetJS.
+ * Reads the first sheet and converts it to JSON with headers from the first row.
+ */
+function parseExcel(buffer) {
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) return [];
+  const sheet = workbook.Sheets[firstSheetName];
+  // Convert to array of objects; header row becomes keys
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  // Normalize keys (trim whitespace)
+  return rows.map((row) => {
+    const cleaned = {};
+    Object.keys(row).forEach((key) => {
+      cleaned[key.trim()] = String(row[key]).trim();
+    });
+    return cleaned;
+  });
+}
+
+/**
+ * Check if a filename has a valid spreadsheet extension.
+ */
+function isValidSpreadsheet(fileName) {
+  const lower = fileName.toLowerCase();
+  return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function isExcelFile(fileName) {
+  const lower = fileName.toLowerCase();
+  return lower.endsWith(".xlsx") || lower.endsWith(".xls");
+}
+
 export default function TestingUploadPage() {
   const router = useRouter();
   const { showToast } = useToast();
@@ -42,30 +80,56 @@ export default function TestingUploadPage() {
   const csvInputRef = useRef(null);
   const imgInputRef = useRef(null);
 
-  // CSV file handler
+  // CSV / Excel file handler
   const handleCsvFile = useCallback(
     (file) => {
       if (!file) return;
-      if (!file.name.toLowerCase().endsWith(".csv")) {
-        showToast("❌ Invalid File", "Please upload a CSV file (.csv extension).", "error");
+      if (!isValidSpreadsheet(file.name)) {
+        showToast("❌ Invalid File", "Please upload a CSV or Excel file (.csv, .xlsx, .xls).", "error");
         return;
       }
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        const parsed = parseCsv(text);
-        if (parsed.length === 0) {
-          showToast("❌ Empty CSV", "Could not parse any data rows from this CSV file.", "error");
-          return;
-        }
-        setCsvData(parsed, file.name);
-        showToast(
-          "✓ CSV Loaded",
-          `Parsed ${parsed.length} coordinate rows from "${file.name}".`,
-          "success"
-        );
-      };
-      reader.readAsText(file);
+
+      if (isExcelFile(file.name)) {
+        // Parse Excel with SheetJS
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const parsed = parseExcel(e.target.result);
+            if (parsed.length === 0) {
+              showToast("❌ Empty File", "Could not parse any data rows from this Excel file.", "error");
+              return;
+            }
+            setCsvData(parsed, file.name);
+            showToast(
+              "✓ Excel Loaded",
+              `Parsed ${parsed.length} coordinate rows from "${file.name}".`,
+              "success"
+            );
+          } catch (err) {
+            console.error("Excel parse error:", err);
+            showToast("❌ Parse Error", "Failed to read the Excel file. Ensure it is a valid .xlsx or .xls file.", "error");
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        // Parse CSV
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const text = e.target.result;
+          const parsed = parseCsv(text);
+          if (parsed.length === 0) {
+            showToast("❌ Empty CSV", "Could not parse any data rows from this CSV file.", "error");
+            return;
+          }
+          setCsvData(parsed, file.name);
+          showToast(
+            "✓ CSV Loaded",
+            `Parsed ${parsed.length} coordinate rows from "${file.name}".`,
+            "success"
+          );
+        };
+        reader.readAsText(file);
+      }
     },
     [setCsvData, showToast]
   );
@@ -131,7 +195,7 @@ export default function TestingUploadPage() {
             <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
             <h3 className="font-bold text-xs text-on-surface mb-3 flex items-center gap-2 select-none uppercase tracking-wide">
               <span className="material-symbols-outlined text-[18px] text-primary">description</span>
-              CSV Welding Coordinates
+              Welding Coordinates (CSV / Excel)
             </h3>
             <div
               onDragOver={(e) => {
@@ -152,7 +216,7 @@ export default function TestingUploadPage() {
               <input
                 ref={csvInputRef}
                 type="file"
-                accept=".csv"
+                accept={ACCEPT_STRING}
                 className="hidden"
                 onChange={(e) => handleCsvFile(e.target.files?.[0])}
               />
@@ -175,10 +239,10 @@ export default function TestingUploadPage() {
                     upload_file
                   </span>
                   <span className="text-sm font-bold text-on-surface">
-                    Drop CSV file here
+                    Drop CSV or Excel file here
                   </span>
                   <span className="text-[11px] text-on-surface-variant font-medium mt-1">
-                    or click to browse — expects X, Y, Z, Rx, Ry, Rz columns
+                    or click to browse — .csv, .xlsx, .xls supported
                   </span>
                 </>
               )}
@@ -274,20 +338,26 @@ export default function TestingUploadPage() {
               Testing Mode
             </h3>
             <p className="text-sm text-on-surface-variant font-medium leading-relaxed">
-              Upload welding coordinates (CSV) and a reference image of the welding path. The system will parse the coordinates, display them alongside the image, and generate ABB RAPID code for the robot controller.
+              Upload welding coordinates (<strong>CSV or Excel</strong>) and a reference image of the welding path. The system will parse the coordinates, display them alongside the image, and generate ABB RAPID code for the robot controller.
             </p>
           </div>
           <div className="bg-surface border border-outline-variant rounded-xl p-5 w-full text-left">
             <h4 className="font-bold text-xs text-on-surface mb-3 uppercase tracking-wider flex items-center gap-2">
               <span className="material-symbols-outlined text-primary text-base">info</span>
-              Expected CSV Format
+              Expected Data Format
             </h4>
+            <p className="text-[11px] text-on-surface-variant font-medium mb-2">
+              CSV files or the first sheet of an Excel workbook should contain these columns:
+            </p>
             <pre className="bg-inverse-surface text-inverse-on-surface rounded-lg p-3 text-[11px] font-mono overflow-x-auto leading-relaxed">
 {`X,Y,Z,Rx,Ry,Rz
 450.5,12.2,400.1,90.0,0.0,-90.0
 472.1,35.4,395.2,90.0,0.0,-90.0
 510.3,48.7,388.5,85.0,5.0,-88.0`}
             </pre>
+            <p className="text-[10px] text-on-surface-variant/70 font-semibold mt-2">
+              Supported formats: .csv, .xlsx, .xls
+            </p>
           </div>
           {/* Upload status summary */}
           {(csvData || imageDataUrl) && (
@@ -299,7 +369,7 @@ export default function TestingUploadPage() {
               <div className="flex items-center gap-2 text-xs font-semibold">
                 <span className={`w-2 h-2 rounded-full ${csvData ? "bg-green-500" : "bg-gray-300"}`}></span>
                 <span className={csvData ? "text-on-surface" : "text-on-surface-variant/50"}>
-                  CSV: {csvData ? `${csvFileName} (${csvData.length} points)` : "Not uploaded"}
+                  Data: {csvData ? `${csvFileName} (${csvData.length} points)` : "Not uploaded"}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs font-semibold">

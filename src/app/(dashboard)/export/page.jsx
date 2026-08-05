@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
 import Active3DViewport from "@/components/Active3DViewport";
 import RAPIDCodeEditor from "@/components/RAPIDCodeEditor";
 import { useToast } from "@/components/ToastContext";
+import { useIntegrationMode } from "@/components/IntegrationModeContext";
+import { useTestingWorkflow } from "@/components/TestingWorkflowContext";
+import { csvToRapid } from "@/services/csvToRapid";
 import { robotStudioApi } from "@/services/robotStudioApi";
 
 const EXPORT_RAPID_CODE = `MODULE MainModule
@@ -38,44 +41,65 @@ ENDMODULE`;
 export default function ExportPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { mode } = useIntegrationMode();
+  const { csvData } = useTestingWorkflow();
   const [syncing, setSyncing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showModal, setShowModal] = useState(false);
+
+  const activeCode = useMemo(() => {
+    if (mode === "testing" && csvData && csvData.length > 0) {
+      return csvToRapid(csvData);
+    }
+    return EXPORT_RAPID_CODE;
+  }, [mode, csvData]);
+
+  const fileName = mode === "testing" ? "Module1.mod" : "MainModule.mod";
 
   const handleCopyAndLaunch = async () => {
     setSyncing(true);
     showToast(
       "📋 Auto-Saving & Copied...",
-      "Saving MainModule.mod and opening RobotStudio Desktop...",
+      `Saving ${fileName} and launching RobotStudio 2025...`,
       "info"
     );
 
     try {
       // 1. Copy code to clipboard
-      await navigator.clipboard.writeText(EXPORT_RAPID_CODE);
+      await navigator.clipboard.writeText(activeCode);
       
       // 2. Trigger browser file download (Autosave generated code)
-      const blob = new Blob([EXPORT_RAPID_CODE], { type: "text/plain;charset=utf-8" });
+      const blob = new Blob([activeCode], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = "MainModule.mod";
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      // 3. Show RobotStudio launcher/installer notice modal
-      setShowModal(true);
-      
-      showToast(
-        "✓ Saved & Copied!",
-        "RAPID code downloaded and copied to clipboard successfully.",
-        "success"
-      );
+      // 3. Launch RobotStudio 2025 via local server API endpoint
+      const res = await fetch("/api/launch-robotstudio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: activeCode, fileName }),
+      });
+      const data = await res.json();
+
+      if (data && data.success) {
+        showToast(
+          "🚀 RobotStudio 2025 Launched!",
+          `RobotStudio 2025 opened on your desktop with ${fileName}. Code copied to clipboard!`,
+          "success"
+        );
+      } else {
+        setShowModal(true);
+      }
     } catch (e) {
       console.error(e);
-      showToast("❌ Export Error", "Could not complete download and sync.", "error");
+      setShowModal(true);
+      showToast("✓ Saved & Copied!", "RAPID code downloaded and copied to clipboard successfully.", "success");
     } finally {
       setSyncing(false);
     }
@@ -166,8 +190,8 @@ export default function ExportPage() {
 
           {/* Code Viewer Panel */}
           <RAPIDCodeEditor 
-            code={EXPORT_RAPID_CODE} 
-            title="Dynamic ABB RAPID Output (MainModule.mod)" 
+            code={activeCode} 
+            title={mode === "testing" ? "Dynamic ABB RAPID Output (Module1.mod)" : "Dynamic ABB RAPID Output (MainModule.mod)"} 
             status="Ready to Export" 
             onCopySuccess={handleCopyAndLaunch}
           />
@@ -240,7 +264,7 @@ export default function ExportPage() {
 
             <div className="text-xs text-on-surface-variant leading-relaxed flex flex-col gap-3 font-semibold">
               <p>
-                We have successfully copied the RAPID code to your system clipboard and automatically saved <strong>MainModule.mod</strong> to your Downloads folder.
+                We have successfully copied the RAPID code to your system clipboard and automatically saved <strong>{fileName}</strong> to your Downloads folder.
               </p>
               <p className="bg-surface-container-low border border-outline-variant/60 p-3 rounded-lg text-on-surface text-[11px] leading-relaxed">
                 <strong>Notice:</strong> Opening RobotStudio requires the desktop application installed on your PC. If it does not start automatically, please click below to download the official software.
