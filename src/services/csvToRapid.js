@@ -137,7 +137,7 @@ export function csvToRapid(rows) {
   lines.push("    ! Description:");
   lines.push("    !   <Insert description here>");
   lines.push("    !");
-  lines.push("    ! Author: hieun");
+  lines.push("    ! Author: VertexDynamics");
   lines.push("    !");
   lines.push("    ! Version: 1.0");
   lines.push("    !");
