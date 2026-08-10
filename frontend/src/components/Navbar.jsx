@@ -3,53 +3,41 @@
 import React from "react";
 import Link from "next/link";
 import { useAuth } from "./AuthContext";
-import { useIntegrationMode } from "./IntegrationModeContext";
 import { useTcpWorkflow } from "./TcpWorkflowContext";
-import IntegrationModeSwitch from "./IntegrationModeSwitch";
+import { useIntegrationMode } from "./IntegrationModeContext";
 
 export default function Navbar() {
   const { user, logout, isAuthenticated } = useAuth();
-  const { mode, tracerStatus } = useIntegrationMode();
   const { connectionStatus } = useTcpWorkflow();
+  const { mode, setMode } = useIntegrationMode();
 
   if (!isAuthenticated) return null;
 
   // Determine TracerStudio badge display
   let tracerBadge;
-  if (mode === "api") {
+  // TCP mode
+  if (connectionStatus === "connected") {
     tracerBadge = {
-      label: "TracerStudio API",
-      status: "Connected",
+      label: "TracerStudio Bridge",
+      status: "Online (Port 7001)",
       color: "green",
     };
-  } else if (mode === "testing") {
-    tracerBadge = {
-      label: "Testing Mode",
-      status: "Active",
-      color: "amber",
-    };
   } else {
-    // TCP mode
-    if (connectionStatus === "connected") {
-      tracerBadge = {
-        label: "TracerStudio Bridge",
-        status: "Online",
-        color: "green",
-      };
-    } else {
-      tracerBadge = {
-        label: "TracerStudio Bridge",
-        status: "Idle",
-        color: "gray",
-      };
-    }
+    tracerBadge = {
+      label: "TracerStudio Bridge",
+      status: "Idle",
+      color: "gray",
+    };
   }
+
+  const isTestingMode = mode === "testing";
 
   const statusDotColor = tracerBadge.color === "green"
     ? "bg-green-500"
     : tracerBadge.color === "amber"
     ? "bg-amber-500"
     : "bg-gray-400";
+
 
   return (
     <header className="bg-surface flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant shrink-0 z-50 sticky top-0">
@@ -66,10 +54,21 @@ export default function Navbar() {
         </span>
       </Link>
 
-      {/* Middle/Right Status & Profile Controls */}
+            {/* Middle/Right Status & Profile Controls */}
       <div className="flex items-center gap-4 lg:gap-6">
-        {/* Mode Switch */}
-        <IntegrationModeSwitch />
+        {/* Testing Mode Toggle */}
+        <button
+          onClick={() => setMode(isTestingMode ? "tcp" : "testing")}
+          className={`px-4 py-1.5 rounded-full text-[11px] font-bold transition-all duration-200 flex items-center gap-2 border ${
+            isTestingMode
+              ? "bg-amber-500 text-white border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]"
+              : "bg-surface-container-high text-on-surface-variant border-outline-variant/50 hover:border-outline-variant"
+          }`}
+          title={isTestingMode ? "Disable Testing Mode" : "Enable Testing Mode"}
+        >
+          <div className={`w-1.5 h-1.5 rounded-full ${isTestingMode ? "bg-white animate-pulse" : "bg-on-surface-variant/40"}`}></div>
+          Testing: {isTestingMode ? "Active" : "Inactive"}
+        </button>
 
         {/* Status Badges */}
         <div className="hidden lg:flex items-center gap-3">

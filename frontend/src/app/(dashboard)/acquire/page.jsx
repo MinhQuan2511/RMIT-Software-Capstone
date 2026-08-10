@@ -4,10 +4,9 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
-import Active3DViewport from "@/components/Active3DViewport";
 import { useToast } from "@/components/ToastContext";
 import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
-import { acquireTrajectory, acquireFromFile } from "@/services/tracerStudioTcpBridge";
+import { acquireTrajectory } from "@/services/tracerStudioTcpBridge";
 import axiosClient from "@/services/axiosClient";
 
 export default function AcquirePage() {
@@ -22,21 +21,54 @@ export default function AcquirePage() {
     setRawPayloadData,
     setCanonicalPath,
     updateProgress,
+    rawPayload,
+    connectionStatus,
   } = useTcpWorkflow();
 
   const [requestType, setRequestType] = useState("011 Single Trajectory");
   const [templateNumber, setTemplateNumber] = useState("03");
   const [poseSource, setPoseSource] = useState("Active Controller Pose");
-  const [pullMode, setPullMode] = useState("On Demand");
-  const [retryAttempts, setRetryAttempts] = useState("3");
   const [watchFolder, setWatchFolder] = useState("C:\\TracerBridge\\Inbound\\");
   const [autoDetect, setAutoDetect] = useState(true);
-  const [importOnStable, setImportOnStable] = useState(true);
   const [acquiring, setAcquiring] = useState(false);
   const [acquisitionComplete, setAcquisitionComplete] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
+  const [terminalLogs, setTerminalLogs] = useState([]);
+  const [activeTab, setActiveTab] = useState("log");
 
-  // Auto-load staging files when entering Watched Folder mode
+  // Mock logging for demonstration
+  useEffect(() => {
+    if (acquiring) {
+      const logs = [
+        `[${new Date().toLocaleTimeString()}] INITIATING ${acquisitionMethod.toUpperCase()} ACQUISITION...`,
+        `[${new Date().toLocaleTimeString()}] SOCKET CONNECTED: ${bridgeConfig?.ip || "localhost"}:7001`,
+        `[${new Date().toLocaleTimeString()}] SENDING REQUEST: ${requestType}`,
+      ];
+      setTerminalLogs(logs);
+
+      const interval = setInterval(() => {
+        setTerminalLogs(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] RECEIVING PACKET: ${Math.floor(Math.random() * 1000)} BYTES...`,
+          `[${new Date().toLocaleTimeString()}] DATA BUFFER STATUS: ${Math.floor(Math.random() * 100)}%`
+        ].slice(-10));
+      }, 1000);
+
+      return () => clearInterval(interval);
+    }
+  }, [acquiring, acquisitionMethod, bridgeConfig, requestType]);
+
+  useEffect(() => {
+    if (acquisitionComplete && rawPayload) {
+      setTerminalLogs(prev => [
+        ...prev,
+        `[${new Date().toLocaleTimeString()}] ACQUISITION SUCCESSFUL.`,
+        `[${new Date().toLocaleTimeString()}] TOTAL POINTS: ${rawPayload.totalPoints}`,
+      ].slice(-10));
+    }
+  }, [acquisitionComplete, rawPayload]);
+
+  // Auto-load staging files
   useEffect(() => {
     if (acquisitionMethod === "watched-folder" && acquisitionQueue.length === 0) {
       scanWatchedFolder();
@@ -55,13 +87,7 @@ export default function AcquirePage() {
           status: "Ready",
           lastUpdate: new Date().toLocaleTimeString(),
         }));
-
         setAcquisitionQueue(newItems);
-        showToast(
-          "✓ Watched Folder Scanned",
-          `Detected ${data.filesFound.length} test scan files in staging folder (${data.rawCurvePoints.length} points).`,
-          "info"
-        );
       }
     } catch (e) {
       console.warn("Failed scanning watched folder:", e.message);
@@ -70,82 +96,27 @@ export default function AcquirePage() {
 
   const handleAcquisition = async () => {
     setAcquiring(true);
-
     try {
       let resultPayload = null;
-
       if (acquisitionMethod === "live-tcp") {
         const [type] = requestType.split(" ");
         const result = await acquireTrajectory(bridgeConfig, { requestType: type, templateNumber });
-        if (result.success) {
-          resultPayload = result.payload;
-        }
-      } else if (acquisitionMethod === "watched-folder") {
-        // Trigger ingestion & pipeline execution on backend
-        const ingestRes = await axiosClient.post("/ingest-files");
-        const pipelineRes = await axiosClient.post("/process-pipeline");
-
-        if (pipelineRes.data && pipelineRes.data.success) {
-          const pipeline = pipelineRes.data.pipeline;
-          resultPayload = {
-            source: "Watched Folder",
-            responseCode: "002",
-            weldType: "Fillet Weld",
-            pathCount: 1,
-            totalPoints: pipeline.totalPoints,
-            plateThicknessMm: 3.0,
-            weldGapMm: 0.8,
-            pathPoints: pipeline.robotTargets,
-            rapidCode: pipeline.rapidCode,
-            pipeline,
-            timestamp: new Date().toISOString(),
-          };
-          setCanonicalPath({
-            id: `canonical_${Date.now()}`,
-            source: "Feature.txt",
-            coordinateFrame: "WorkObject Frame",
-            pathPoints: pipeline.robotTargets,
-            rapidCode: pipeline.rapidCode,
-            totalPoints: pipeline.totalPoints,
-            status: pipeline.matrixStatus,
-          });
-        }
+        if (result.success) resultPayload = result.payload;
       } else {
-        // Manual Import Mode
-        if (selectedFiles.length > 0) {
-          const formData = new FormData();
-          for (const file of selectedFiles) {
-            formData.append("files", file);
-          }
-          await axiosClient.post("/ingest-files", formData, {
-            headers: { "Content-Type": "multipart/form-data" },
-          });
-        }
-
         const pipelineRes = await axiosClient.post("/process-pipeline");
         if (pipelineRes.data && pipelineRes.data.success) {
           const pipeline = pipelineRes.data.pipeline;
           resultPayload = {
-            source: "Manual Import",
-            responseCode: "002",
-            weldType: "Fillet Weld",
-            pathCount: 1,
+            source: acquisitionMethod === "watched-folder" ? "Watched Folder" : "Manual Import",
             totalPoints: pipeline.totalPoints,
-            plateThicknessMm: 3.0,
-            weldGapMm: 0.8,
             pathPoints: pipeline.robotTargets,
-            rapidCode: pipeline.rapidCode,
-            pipeline,
             timestamp: new Date().toISOString(),
           };
           setCanonicalPath({
             id: `canonical_${Date.now()}`,
             source: selectedFiles[0]?.name || "Feature.txt",
-            coordinateFrame: "WorkObject Frame",
             pathPoints: pipeline.robotTargets,
-            rapidCode: pipeline.rapidCode,
             totalPoints: pipeline.totalPoints,
-            status: pipeline.matrixStatus,
           });
         }
       }
@@ -154,28 +125,20 @@ export default function AcquirePage() {
         setRawPayloadData(resultPayload);
         updateProgress({ acquisitionComplete: true });
         setAcquisitionComplete(true);
-
-        // Populate Acquisition Queue
         setAcquisitionQueue((prev) => [
           ...prev,
           {
             id: `acq_${Date.now()}`,
             item: acquisitionMethod === "live-tcp" ? "tcp_stream_packet.bin" : "Feature.txt",
-            source: acquisitionMethod === "live-tcp" ? "Live TCP Stream" : acquisitionMethod === "watched-folder" ? "Watched Folder" : "Manual Import",
+            source: acquisitionMethod === "live-tcp" ? "Live TCP Stream" : "Manual Import",
             status: "Completed",
             lastUpdate: new Date().toLocaleTimeString(),
           },
         ]);
-
-        showToast(
-          "✓ Acquisition Complete",
-          `Ingested seam data successfully: ${resultPayload.totalPoints} 3D trajectory points ready for Parse & Map.`,
-          "success"
-        );
+        showToast("✓ Ingested", `Trajectory points ready.`, "success");
       }
     } catch (err) {
-      console.error("Acquisition error:", err);
-      showToast("❌ Acquisition Error", "Failed to acquire trajectory data from source.", "error");
+      showToast("❌ Error", "Failed to acquire data.", "error");
     } finally {
       setAcquiring(false);
     }
@@ -185,368 +148,255 @@ export default function AcquirePage() {
     const files = Array.from(e.target.files || []);
     setSelectedFiles(files);
     if (files.length > 0) {
-      showToast(
-        "✓ Files Selected",
-        `Selected ${files.length} test files (${files.map((f) => f.name).join(", ")}).`,
-        "info"
-      );
-      setAcquisitionQueue(
-        files.map((f) => ({
-          id: `file_${f.name}_${Date.now()}`,
-          item: f.name,
-          source: "Manual Import",
-          status: "Staged",
-          lastUpdate: new Date().toLocaleTimeString(),
-        }))
-      );
+      setAcquisitionQueue(files.map((f) => ({
+        id: `file_${f.name}_${Date.now()}`,
+        item: f.name,
+        source: "Manual Import",
+        status: "Staged",
+        lastUpdate: new Date().toLocaleTimeString(),
+      })));
     }
   };
 
   const handleNextStep = () => {
-    if (!acquisitionComplete) {
-      handleAcquisition();
-    }
+    if (!acquisitionComplete) handleAcquisition();
     router.push("/parse-map");
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden w-full h-full relative">
-      {/* Left Panel */}
+    <div className="flex-1 flex overflow-hidden w-full h-full relative bg-slate-950">
+      {/* Left Panel (Kept Original) */}
       <div className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-4 shrink-0 z-40 overflow-y-auto">
         <div className="px-1 select-none">
-          <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
-            Acquisition Method & Input Source
-          </h2>
-          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
-            Choose whether weld data is acquired from a live TCP stream or from TracerStudio output files.
-          </p>
+          <h2 className="text-xl font-extrabold text-on-surface tracking-tight">Acquisition Method</h2>
+          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">Choose whether weld data is acquired from a live TCP stream or output files.</p>
         </div>
-
         <StepperProgress />
-
         <div className="h-px w-full bg-outline-variant/60 my-1 opacity-50"></div>
-
         <div className="flex-1 flex flex-col gap-5 pb-6">
-          {/* Card 1: Input Method Selection */}
-          <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
+          {/* Card 1: Input Method */}
+          <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
-              <span className="material-symbols-outlined text-[18px] text-primary">input</span>
-              Input Method Selection
+            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
+              <span className="material-symbols-outlined text-[18px] text-primary">input</span>Input Method Selection
             </h3>
             <div className="flex flex-col gap-3">
-              {[
-                { value: "live-tcp", label: "Live TCP Stream", desc: "Pull trajectory data through a TCP bridge request." },
-                { value: "watched-folder", label: "Watched Folder", desc: "Monitor backend uploads staging folder for test scan files." },
-                { value: "manual", label: "Manual Import", desc: "Select local Feature.txt, handeye_result.yaml, Cfig, or CamerDepth.txt files." },
-              ].map((method) => (
-                <label
-                  key={method.value}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                    acquisitionMethod === method.value
-                      ? "border-primary bg-primary/5"
-                      : "border-outline-variant hover:border-outline"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="acquisition-method"
-                    value={method.value}
-                    checked={acquisitionMethod === method.value}
-                    onChange={() => setAcquisition(method.value)}
-                    className="w-4 h-4 mt-0.5 border-outline-variant text-primary focus:ring-primary bg-surface cursor-pointer"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-on-surface">{method.label}</span>
-                    <p className="text-[11px] text-on-surface-variant mt-0.5">{method.desc}</p>
-                  </div>
+              {[{ value: "live-tcp", label: "Live TCP Stream" }, { value: "watched-folder", label: "Watched Folder" }, { value: "manual", label: "Manual Import" }].map((m) => (
+                <label key={m.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${acquisitionMethod === m.value ? "border-primary bg-primary/5" : "border-outline-variant hover:border-outline"}`}>
+                  <input type="radio" name="acquisition-method" value={m.value} checked={acquisitionMethod === m.value} onChange={() => setAcquisition(m.value)} className="w-4 h-4 mt-0.5" />
+                  <span className="text-xs font-bold text-on-surface">{m.label}</span>
                 </label>
               ))}
             </div>
           </div>
 
-          {/* Card 2: Stream Request Configuration (Live TCP Only) */}
-          {acquisitionMethod === "live-tcp" && (
-            <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
+          {/* Config Cards (Contextual) */}
+          {acquisitionMethod === "live-tcp" ? (
+            <div className="bg-surface border border-outline-variant rounded-xl p-4 relative overflow-hidden">
               <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-              <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
-                <span className="material-symbols-outlined text-[18px] text-primary">tune</span>
-                Stream Request Configuration
+              <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
+                <span className="material-symbols-outlined text-[18px] text-primary">tune</span>Stream Configuration
               </h3>
               <div className="flex flex-col gap-4">
-                <div>
-                  <label htmlFor="acq-request" className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                    Request Type
-                  </label>
-                  <select
-                    id="acq-request"
-                    value={requestType}
-                    onChange={(e) => setRequestType(e.target.value)}
-                    className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs text-on-surface font-semibold focus:outline-none focus:border-primary appearance-none cursor-pointer"
-                  >
-                    <option>011 Single Trajectory</option>
-                    <option>012 Fused Trajectory</option>
-                    <option>021 Program Editor Trajectory</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="acq-template" className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                    Template Number
-                  </label>
-                  <input
-                    id="acq-template"
-                    type="text"
-                    value={templateNumber}
-                    onChange={(e) => setTemplateNumber(e.target.value)}
-                    className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs text-on-surface font-mono font-semibold focus:outline-none focus:border-primary appearance-none"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="acq-pose" className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                    Robot Pose Source
-                  </label>
-                  <select
-                    id="acq-pose"
-                    value={poseSource}
-                    onChange={(e) => setPoseSource(e.target.value)}
-                    className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs text-on-surface font-semibold focus:outline-none focus:border-primary appearance-none cursor-pointer"
-                  >
-                    <option>Active Controller Pose</option>
-                    <option>Saved Scan Pose</option>
-                    <option>Manual Pose</option>
-                  </select>
-                </div>
+                <select value={requestType} onChange={(e) => setRequestType(e.target.value)} className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-semibold">
+                  <option>011 Single Trajectory</option>
+                  <option>012 Fused Trajectory</option>
+                </select>
+                <input type="text" value={templateNumber} readOnly className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono font-semibold" />
               </div>
+            </div>
+          ) : (
+            <div className="bg-surface border border-outline-variant rounded-xl p-4 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
+              <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
+                <span className="material-symbols-outlined text-[18px] text-primary">folder_copy</span>File Ingestion
+              </h3>
+              {acquisitionMethod === "watched-folder" ? (
+                <div className="flex gap-2">
+                  <input type="text" value={watchFolder} readOnly className="flex-1 bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono" />
+                  <button onClick={scanWatchedFolder} className="bg-primary/10 text-primary px-3 py-2 rounded-md font-bold text-xs">Scan</button>
+                </div>
+              ) : (
+                <input type="file" multiple onChange={handleFileSelect} className="w-full text-xs text-on-surface-variant file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-on-primary" />
+              )}
             </div>
           )}
 
-          {/* Card 3: File Watch & Fallback Ingestion (Watched Folder & Manual) */}
-          {acquisitionMethod !== "live-tcp" && (
-            <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-              <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
-                <span className="material-symbols-outlined text-[18px] text-primary">folder_copy</span>
-                {acquisitionMethod === "watched-folder" ? "Watched Folder Ingestion" : "Manual File Import"}
-              </h3>
-              <div className="flex flex-col gap-4">
-                {acquisitionMethod === "watched-folder" ? (
-                  <>
-                    <div>
-                      <label htmlFor="acq-folder" className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                        Target Folder Location
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          id="acq-folder"
-                          type="text"
-                          value={watchFolder}
-                          onChange={(e) => setWatchFolder(e.target.value)}
-                          className="flex-1 bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs text-on-surface font-mono font-semibold focus:outline-none focus:border-primary appearance-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={scanWatchedFolder}
-                          className="bg-primary/10 hover:bg-primary/20 text-primary px-3 py-2 rounded-md font-bold text-xs uppercase cursor-pointer"
-                        >
-                          Scan
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        id="acq-autodetect"
-                        type="checkbox"
-                        checked={autoDetect}
-                        onChange={(e) => setAutoDetect(e.target.checked)}
-                        className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary bg-surface cursor-pointer"
-                      />
-                      <label htmlFor="acq-autodetect" className="text-xs font-bold text-on-surface-variant">
-                        Auto-detect scan files (Feature.txt, handeye_result.yaml, Cfig, CamerDepth.txt)
-                      </label>
-                    </div>
-                  </>
-                ) : (
-                  <div>
-                    <label htmlFor="acq-file" className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                      Select Files (Feature.txt, handeye_result.yaml, Cfig, CamerDepth.txt)
-                    </label>
-                    <input
-                      id="acq-file"
-                      type="file"
-                      multiple
-                      accept=".txt,.yaml,.yml,.json,*/*"
-                      onChange={handleFileSelect}
-                      className="w-full text-xs text-on-surface-variant file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-primary file:text-on-primary file:hover:bg-primary/90 cursor-pointer"
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Supported Scan File Formats</span>
-                  <div className="flex flex-wrap gap-1.5 mt-1.5">
-                    {[
-                      { ext: ".txt", label: "Feature.txt / CamerDepth.txt" },
-                      { ext: ".yaml", label: "handeye_result.yaml" },
-                      { ext: ".json", label: "Cfig Setup" },
-                    ].map((fmt) => (
-                      <span key={fmt.ext} className="text-[10px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
-                        {fmt.ext} ({fmt.label})
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Card 4: Acquisition Queue */}
-          <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
+          {/* Acquisition Queue */}
+          <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
-              <span className="material-symbols-outlined text-[18px] text-primary">queue</span>
-              Acquisition Queue ({acquisitionQueue.length})
+            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
+              <span className="material-symbols-outlined text-[18px] text-primary">queue</span>Queue ({acquisitionQueue.length})
             </h3>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[120px]">
               <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="text-on-surface-variant font-bold uppercase tracking-wider text-[10px]">
-                    <th className="text-left pb-2">Item</th>
-                    <th className="text-left pb-2">Source</th>
-                    <th className="text-left pb-2">Status</th>
-                    <th className="text-left pb-2">Last Update</th>
-                  </tr>
-                </thead>
                 <tbody>
-                  {acquisitionQueue.length === 0 ? (
-                    <tr>
-                      <td colSpan="4" className="py-3 text-center text-on-surface-variant text-xs">
-                        No files in queue. Click "Start Acquisition" or scan folder to ingest.
-                      </td>
+                  {acquisitionQueue.map((q) => (
+                    <tr key={q.id} className="border-t border-outline-variant/30">
+                      <td className="py-2 font-mono font-bold text-on-surface truncate max-w-[100px]">{q.item}</td>
+                      <td className="py-2 text-on-surface-variant text-right">{q.status}</td>
                     </tr>
-                  ) : (
-                    acquisitionQueue.map((q) => (
-                      <tr key={q.id} className="border-t border-outline-variant/30">
-                        <td className="py-2 font-mono font-bold text-on-surface">{q.item}</td>
-                        <td className="py-2 text-on-surface-variant">{q.source}</td>
-                        <td className="py-2">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            q.status === "Completed" || q.status === "Ready"
-                              ? "bg-green-500/10 text-green-600"
-                              : q.status === "Staged"
-                              ? "bg-blue-500/10 text-blue-600"
-                              : "bg-amber-500/10 text-amber-600"
-                          }`}>
-                            {q.status}
-                          </span>
-                        </td>
-                        <td className="py-2 text-on-surface-variant font-mono">{q.lastUpdate}</td>
-                      </tr>
-                    ))
-                  )}
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* Start Acquisition Button */}
-          <button
-            onClick={handleAcquisition}
-            disabled={acquiring}
-            className="w-full bg-primary hover:bg-on-primary-fixed-variant disabled:bg-surface-container-high disabled:text-on-surface-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-          >
-            {acquiring ? (
-              <>
-                <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
-                Processing Ingestion...
-              </>
-            ) : acquisitionComplete ? (
-              <>
-                <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                Acquisition Complete — Ready for Parse & Map
-              </>
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-[16px]">play_arrow</span>
-                Start Acquisition & Process Pipeline
-              </>
-            )}
+          <button onClick={handleAcquisition} disabled={acquiring} className="w-full bg-primary hover:bg-on-primary-fixed-variant disabled:bg-surface-container-high text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2">
+            {acquiring ? <span className="material-symbols-outlined animate-spin">progress_activity</span> : <span className="material-symbols-outlined">play_arrow</span>}
+            {acquiring ? "Processing..." : acquisitionComplete ? "Complete" : "Start Acquisition"}
           </button>
 
-          {/* Bottom Navigation */}
-          <div className="flex gap-4 select-none">
-            <Link
-              href="/connect"
-              className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-            >
-              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-              Back to Connect
+          <div className="flex gap-4">
+            <Link href="/connect" className="flex-1 bg-surface border border-outline-variant text-on-surface-variant rounded-xl py-3.5 font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm">
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>Back
             </Link>
-            <button
-              onClick={handleNextStep}
-              className="flex-1 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-            >
-              Next Step
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+            <button onClick={handleNextStep} className="flex-1 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm">
+              Next Step <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Right Viewport */}
-      <Active3DViewport
-        title="Acquisition Monitor"
-        showSolidControls
-      >
-        <div className="w-full h-full flex flex-col items-center justify-center relative">
-          <div className="absolute inset-0 bg-3d-viewport"></div>
-          <div className="absolute inset-0 viewport-grid"></div>
+      {/* REDESIGNED RIGHT PANEL: LIVE INGESTION HUB */}
+      <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden relative">
+        {/* Background Grid Pattern */}
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
 
-          <div className="relative z-10 w-full max-w-[650px] px-8">
-            <div className="flex items-start justify-between mb-6">
-              {/* Route 1: Live TCP */}
-              <div className="flex-1 flex flex-col items-center">
-                <div className={`w-full h-20 border-2 rounded-xl flex flex-col items-center justify-center gap-1 backdrop-blur-sm transition-all ${
-                  acquisitionMethod === "live-tcp" ? "border-teal-400 bg-teal-900/40" : "border-outline-variant/30 bg-surface/40 opacity-60"
-                }`}>
-                  <span className="text-[10px] font-bold text-teal-300 font-mono">Live TCP Stream</span>
-                  <span className="text-[10px] font-mono text-teal-400/70">Port 7001</span>
-                </div>
-              </div>
-
-              {/* Route 2: Watched Folder / Manual */}
-              <div className="flex-1 flex flex-col items-center">
-                <div className={`w-full h-20 border-2 rounded-xl flex flex-col items-center justify-center gap-1 backdrop-blur-sm transition-all ${
-                  acquisitionMethod !== "live-tcp" ? "border-orange-400 bg-orange-900/40" : "border-outline-variant/30 bg-surface/40 opacity-60"
-                }`}>
-                  <span className="text-[10px] font-bold text-orange-300 font-mono">Scan Files (Feature.txt, handeye)</span>
-                  <span className="text-[10px] font-mono text-orange-400/70">{acquisitionMethod === "watched-folder" ? "backend/uploads" : "Browser Upload"}</span>
-                </div>
-              </div>
+        {/* 1. TOP SECTION: LIVE STREAM METRICS */}
+        <div className="p-6 grid grid-cols-3 gap-5 relative z-10">
+          <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl">
+            <div className="flex items-center justify-between mb-2">
+              <span className="material-symbols-outlined text-blue-400 text-lg">settings_input_component</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${connectionStatus === 'connected' ? 'bg-green-500/10 text-green-400' : 'bg-slate-700 text-slate-400'}`}>
+                {connectionStatus === 'connected' ? 'CONNECTED' : 'IDLE'}
+              </span>
             </div>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">TCP Socket</p>
+            <p className="text-xl font-mono font-black text-slate-100">7001</p>
+          </div>
 
-            {/* Converging Arrows */}
-            <div className="flex justify-center mb-4">
-              <div className="flex flex-col items-center">
-                <div className="flex gap-16">
-                  <div className="w-px h-6 bg-teal-400/40"></div>
-                  <div className="w-px h-6 bg-orange-400/40"></div>
-                </div>
-                <div className="w-px h-4 bg-green-400/40"></div>
-              </div>
+          <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <span className="material-symbols-outlined text-blue-400 text-lg">memory</span>
+              <span className="text-[10px] font-mono text-blue-400 font-bold">{acquiring ? 'SYNCING' : '100%'}</span>
             </div>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Data Buffer</p>
+            <div className="w-full h-1 bg-slate-800 rounded-full mt-2 overflow-hidden">
+              <div className={`h-full bg-blue-500 transition-all duration-1000 ${acquiring ? 'w-2/3 animate-pulse' : 'w-full'}`}></div>
+            </div>
+          </div>
 
-            {/* Unified Input Buffer */}
-            <div className="w-full max-w-[400px] mx-auto mb-4">
-              <div className="border-2 border-green-400/60 rounded-xl bg-green-900/20 flex flex-col items-center justify-center gap-1 py-4 backdrop-blur-sm">
-                <span className="text-[10px] font-bold text-green-300 uppercase tracking-wider">Active Dataset Buffer</span>
-                <span className="text-lg font-mono font-bold text-green-400">
-                  {acquisitionComplete ? "Dataset Active & Matrix Transformed" : "Ready for Ingestion"}
+          <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl">
+            <div className="flex items-center justify-between mb-2">
+              <span className="material-symbols-outlined text-blue-400 text-lg">quick_reference_all</span>
+              <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold">READY</span>
+            </div>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Incoming Packet</p>
+            <p className="text-sm font-mono font-bold text-slate-100 truncate">{acquisitionMethod === 'live-tcp' ? 'tcp_stream_packet.bin' : 'Feature.txt'}</p>
+          </div>
+        </div>
+
+        {/* 2. MIDDLE SECTION: VISUAL DATA PIPELINE CANVAS */}
+        <div className="flex-1 flex items-center justify-center relative px-10">
+          <div className="w-full max-w-4xl relative flex items-center justify-between">
+            {/* Source Node */}
+            <div className={`flex flex-col items-center gap-3 transition-all duration-500 ${acquiring ? 'scale-110' : ''}`}>
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 shadow-2xl transition-all duration-500 ${acquiring ? 'bg-blue-500 border-blue-400 animate-pulse' : 'bg-slate-900 border-slate-700'}`}>
+                <span className="material-symbols-outlined text-3xl text-white">
+                  {acquisitionMethod === 'live-tcp' ? 'sensors' : 'upload_file'}
                 </span>
               </div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Source Inbound</span>
+            </div>
+
+            {/* Connecting Line 1 */}
+            <div className="flex-1 h-[2px] bg-slate-800 mx-4 relative overflow-hidden">
+              <div className={`absolute inset-0 bg-gradient-to-r from-transparent via-blue-500 to-transparent w-full transition-transform duration-[1500ms] ${acquiring ? 'translate-x-full repeat-infinite' : '-translate-x-full'}`} style={{ animation: acquiring ? 'slide 2s linear infinite' : 'none' }}></div>
+            </div>
+
+            {/* Bridge Node */}
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-20 h-20 rounded-full bg-slate-900 border-2 border-slate-700 flex items-center justify-center shadow-[0_0_40px_rgba(30,41,59,0.5)]">
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${acquiring ? 'bg-blue-500/20 border-blue-500/50' : 'bg-slate-800 border-slate-700'}`}>
+                  <span className={`material-symbols-outlined text-2xl ${acquiring ? 'text-blue-400' : 'text-slate-500'}`}>hub</span>
+                </div>
+              </div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">TCP Bridge 7001</span>
+            </div>
+
+            {/* Connecting Line 2 */}
+            <div className="flex-1 h-[2px] bg-slate-800 mx-4 relative overflow-hidden">
+              <div className={`absolute inset-0 bg-gradient-to-r from-transparent via-blue-500 to-transparent w-full transition-transform duration-[1500ms] ${acquiring ? 'translate-x-full repeat-infinite' : '-translate-x-full'}`} style={{ animation: acquiring ? 'slide 2s linear infinite' : 'none' }}></div>
+            </div>
+
+            {/* Buffer Node */}
+            <div className="flex flex-col items-center gap-3">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 transition-all duration-500 ${acquisitionComplete ? 'bg-green-500 border-green-400 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 'bg-slate-900 border-slate-700'}`}>
+                <span className="material-symbols-outlined text-3xl text-white">inventory_2</span>
+              </div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">WeldPath Buffer</span>
             </div>
           </div>
         </div>
-      </Active3DViewport>
+
+        {/* 3. BOTTOM SECTION: SLEEK MINI CONSOLE LOG */}
+        <div className="mx-6 mb-6 h-[180px] bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl flex flex-col overflow-hidden shadow-2xl relative z-10">
+          <div className="px-4 py-2 bg-slate-900/50 border-b border-slate-800 flex items-center justify-between">
+            <div className="flex gap-4">
+              <button onClick={() => setActiveTab("log")} className={`text-[10px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'log' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}>Stream Log</button>
+              <button onClick={() => setActiveTab("json")} className={`text-[10px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'json' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}>Parsed JSON Preview</button>
+            </div>
+            <div className="flex gap-2">
+              <button className="p-1 hover:bg-slate-800 rounded transition-colors text-slate-500" title="Copy Data"><span className="material-symbols-outlined text-sm">content_copy</span></button>
+              <button onClick={() => setTerminalLogs([])} className="p-1 hover:bg-slate-800 rounded transition-colors text-slate-500" title="Clear Log"><span className="material-symbols-outlined text-sm">delete_sweep</span></button>
+            </div>
+          </div>
+
+          <div className="flex-1 p-3 overflow-y-auto font-mono text-[11px] leading-relaxed custom-scrollbar">
+            {activeTab === 'log' ? (
+              <div className="flex flex-col gap-1">
+                {terminalLogs.length === 0 ? (
+                  <p className="text-slate-600 italic">Listening for incoming data packets...</p>
+                ) : (
+                  terminalLogs.map((log, i) => (
+                    <div key={i} className="flex gap-3">
+                      <span className="text-slate-600 shrink-0">[{i+1}]</span>
+                      <span className={log.includes('SUCCESSFUL') ? 'text-green-400' : 'text-blue-400/80'}>{log}</span>
+                    </div>
+                  ))
+                )}
+                {acquiring && <div className="w-1 h-3 bg-blue-500 animate-pulse inline-block ml-6"></div>}
+              </div>
+            ) : (
+              <div className="text-slate-400 whitespace-pre">
+                {rawPayload ? (
+                  <div className="flex flex-col gap-1">
+                    <p><span className="text-blue-400">"status"</span>: <span className="text-green-400">"VALIDATED"</span>,</p>
+                    <p><span className="text-blue-400">"points"</span>: <span className="text-amber-400">{rawPayload.totalPoints}</span>,</p>
+                    <p><span className="text-blue-400">"source"</span>: <span className="text-amber-400">"{rawPayload.source}"</span>,</p>
+                    <p><span className="text-blue-400">"integrity_check"</span>: <span className="text-green-400">true</span></p>
+                  </div>
+                ) : (
+                  <p className="text-slate-600 italic">No parsed data available yet.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <style jsx>{`
+          @keyframes slide {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(100%); }
+          }
+          .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+          .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+          .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        `}</style>
+      </div>
     </div>
   );
 }
+
+

@@ -95,8 +95,8 @@ export default function Active3DViewport({
         </div>
       </div>
 
-      {/* Bottom Tool Navigation Controls */}
-      {!showSimControls ? (
+            {/* Bottom Tool Navigation Controls */}
+      {!showSimControls && false ? (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-surface/90 backdrop-blur-md border border-outline-variant rounded-full p-1.5 shadow-2xl z-10 pointer-events-auto">
           <button className="flex items-center gap-2 px-4 py-2 rounded-full hover:bg-surface-container-high text-on-surface-variant hover:text-primary font-bold text-xs transition-colors">
             <span className="material-symbols-outlined text-[18px]">360</span>
