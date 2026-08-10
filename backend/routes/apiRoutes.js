@@ -1,303 +1,255 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-
-// Import Service Modules
-const { parseHandEyeYaml } = require('../services/parsers/yamlParser');
-const { parseFeatureCurve } = require('../services/parsers/curveParser');
-const { parseCfigConfig } = require('../services/parsers/configParser');
-const { parseCameraDepthGrid } = require('../services/parsers/depthParser');
-
+const multer = require('multer');
+const { exec } = require('child_process');
 const { transformPoints } = require('../services/kinematics/matrixTransform');
-const { computePathQuaternions } = require('../services/kinematics/quaternionMath');
 const { planTrajectory } = require('../services/kinematics/pathPlanner');
-const { generateRapidCode } = require('../services/compiler/rapidCompiler');
-const { getBridgeStatus, broadcastMessage } = require('../services/network/tcpBridge');
+const { computePathQuaternions } = require('../services/kinematics/quaternionMath');
 
-// Multer Storage Configuration for File Ingestion
-const uploadsDir = path.join(__dirname, '..', 'uploads');
+const uploadsDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Multer disk storage configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => cb(null, file.originalname),
 });
 const upload = multer({ storage });
 
-// In-Memory Storage for last compiled pipeline output
-let lastCompiledPipeline = null;
-
 /**
- * GET /api/bridge/status
- * Returns current TCP socket server health and connected client count.
+ * Helper: Find latest .txt file containing curve coordinates
  */
-router.get('/bridge/status', (req, res) => {
-  try {
-    const status = getBridgeStatus();
-    return res.json({
-      success: true,
-      timestamp: new Date().toISOString(),
-      bridge: status,
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+function findLatestFeatureFile(dir) {
+  if (!fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir);
+  const txtFiles = files
+    .filter((f) => f.endsWith('.txt'))
+    .map((f) => ({ name: f, path: path.join(dir, f), mtime: fs.statSync(path.join(dir, f)).mtime }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  for (const file of txtFiles) {
+    const content = fs.readFileSync(file.path, 'utf-8');
+    if (content.includes('curve:')) return file.path;
   }
-});
+  return null;
+}
 
 /**
- * POST /api/ingest-files
- * Accepts uploaded scan files (CamerDepth.txt, Cfig, Feature.txt, handeye_result.yaml)
- * or reads existing files from backend staging directory.
+ * Helper: Find latest .yaml file containing hand-eye matrix
  */
-router.post('/ingest-files', upload.array('files'), (req, res) => {
+function findLatestYamlFile(dir) {
+  if (!fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir);
+  const yamlFiles = files
+    .filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'))
+    .map((f) => ({ name: f, path: path.join(dir, f), mtime: fs.statSync(path.join(dir, f)).mtime }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  for (const file of yamlFiles) {
+    const content = fs.readFileSync(file.path, 'utf-8');
+    if (content.includes('handEyeMatrix') || content.includes('data:')) return file.path;
+  }
+  return null;
+}
+
+/**
+ * Helper: Parse 4x4 matrix from YAML file
+ */
+function parseYamlMatrix(yamlPath) {
+  if (!yamlPath || !fs.existsSync(yamlPath)) return null;
   try {
-    const ingestedSummary = {
-      filesFound: [],
-      handeyeMatrix: null,
-      rawCurvePoints: [],
-      config: null,
-      depthGrid: [],
-    };
+    const content = fs.readFileSync(yamlPath, 'utf-8');
+    const match = content.match(/data:\s*\[([\s\S]*?)\]/);
+    if (match && match[1]) {
+      const numbers = match[1]
+        .trim()
+        .split(/[\s,]+/)
+        .map((v) => parseFloat(v))
+        .filter((v) => !isNaN(v));
+      if (numbers.length === 16) {
+        return [
+          numbers.slice(0, 4),
+          numbers.slice(4, 8),
+          numbers.slice(8, 12),
+          numbers.slice(12, 16),
+        ];
+      }
+    }
+  } catch (err) {
+    console.error('YAML matrix parse error:', err.message);
+  }
+  return null;
+}
 
-    // Check files directory
-    const filesToRead = [
-      'handeye_result.yaml',
-      'Feature.txt',
-      'Cfig',
-      'CamerDepth.txt',
-    ];
-
-    for (const fileName of filesToRead) {
-      const filePath = path.join(uploadsDir, fileName);
-      if (fs.existsSync(filePath)) {
-        ingestedSummary.filesFound.push(fileName);
-        const content = fs.readFileSync(filePath, 'utf-8');
-
-        if (fileName === 'handeye_result.yaml') {
-          try {
-            ingestedSummary.handeyeMatrix = parseHandEyeYaml(content);
-          } catch (e) {
-            console.warn('Failed parsing handeye_result.yaml:', e.message);
-          }
-        } else if (fileName === 'Feature.txt') {
-          ingestedSummary.rawCurvePoints = parseFeatureCurve(content);
-        } else if (fileName === 'Cfig') {
-          ingestedSummary.config = parseCfigConfig(content);
-        } else if (fileName === 'CamerDepth.txt') {
-          ingestedSummary.depthGrid = parseCameraDepthGrid(content);
+/**
+ * Helper: Parse 3D curve points from text file
+ */
+function parseFeaturePoints(featurePath) {
+  if (!featurePath || !fs.existsSync(featurePath)) return [];
+  try {
+    const content = fs.readFileSync(featurePath, 'utf-8');
+    const line = content.split('\n').find((l) => l.trim().startsWith('curve:'));
+    if (line) {
+      const rawCoords = line.replace('curve:', '').trim().split(',').map((v) => parseFloat(v));
+      const points = [];
+      for (let i = 0; i + 2 < rawCoords.length; i += 3) {
+        if (!isNaN(rawCoords[i]) && !isNaN(rawCoords[i + 1]) && !isNaN(rawCoords[i + 2])) {
+          points.push({ x: rawCoords[i], y: rawCoords[i + 1], z: rawCoords[i + 2] });
         }
       }
+      return points;
     }
-
-    return res.json({
-      success: true,
-      message: `Ingested ${ingestedSummary.filesFound.length} scan files from staging directory.`,
-      data: ingestedSummary,
-    });
   } catch (err) {
-    console.error('File ingestion error:', err);
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('Feature points parse error:', err.message);
   }
-});
+  return [];
+}
 
 /**
- * POST /api/process-pipeline
- * Runs parsing -> 4x4 matrix transform -> Quaternion calculation -> Trajectory planning -> RAPID compilation
+ * Helper: Generate ABB RAPID code string
  */
-router.post('/process-pipeline', (req, res) => {
+function generateRapidCode(targets) {
+  let code = `MODULE WeldModule\n`;
+  code += `  !***********************************************************\n`;
+  code += `  ! Module:      WeldModule\n`;
+  code += `  ! Description: Automatically generated weld trajectory\n`;
+  code += `  ! Generated:   ${new Date().toISOString()}\n`;
+  code += `  !***********************************************************\n\n`;
+
+  code += `  CONST robtarget p_home:=[[1178.89,0,809.42],[0.069756,0,0.997564,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];\n\n`;
+
+  targets.forEach((t) => {
+    const q = t.q || [1, 0, 0, 0];
+    code += `  CONST robtarget ${t.name}:=[[${t.x.toFixed(4)},${t.y.toFixed(4)},${t.z.toFixed(4)}],[${q[0].toFixed(6)},${q[1].toFixed(6)},${q[2].toFixed(6)},${q[3].toFixed(6)}],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];\n`;
+  });
+
+  code += `\n  PROC main()\n`;
+  code += `    MoveJ p_home,v500,fine,tool0\\WObj:=wobj0;\n\n`;
+
+  targets.forEach((t) => {
+    if (t.type === 'approach') {
+      code += `    MoveJ ${t.name},v200,z50,tool0\\WObj:=wobj0;\n`;
+    } else if (t.type === 'weld') {
+      code += `    MoveL ${t.name},v100,fine,tool0\\WObj:=wobj0;\n`;
+    } else if (t.type === 'retract') {
+      code += `    MoveJ ${t.name},v200,fine,tool0\\WObj:=wobj0;\n`;
+    }
+  });
+
+  code += `\n    MoveJ p_home,v500,fine,tool0\\WObj:=wobj0;\n`;
+  code += `  ENDPROC\n`;
+  code += `ENDMODULE\n`;
+
+  return code;
+}
+
+// Ingest files endpoints (Both GET and POST to prevent 404)
+const handleIngest = (req, res) => {
+  const uploadedFiles = req.files || [];
+  const existingFiles = fs.readdirSync(uploadsDir);
+  return res.json({
+    success: true,
+    message: `Uploaded ${uploadedFiles.length} file(s). Total in staging: ${existingFiles.length}`,
+    data: { filesFound: existingFiles },
+  });
+};
+router.post('/ingest-files', upload.array('files'), handleIngest);
+router.get('/ingest-files', handleIngest);
+
+// Process pipeline endpoints (Both GET and POST)
+const handlePipeline = (req, res) => {
   try {
-    const {
-      handeyeMatrixOverride,
-      curvePointsOverride,
-      torchAngle = 45,
-      approachOffset = 50,
-      retractOffset = 50,
-      moduleName = 'WeldModule',
-      speed = 'v100',
-      tool = 'tWeldGun',
-    } = req.body || {};
+    const featurePath = findLatestFeatureFile(uploadsDir);
+    const yamlPath = findLatestYamlFile(uploadsDir);
 
-    // 1. Read / Parse Files
-    let handeyeMatrix = handeyeMatrixOverride;
-    let cameraPoints = curvePointsOverride;
-    let config = null;
+    const matrix = parseYamlMatrix(yamlPath);
+    const camPoints = parseFeaturePoints(featurePath);
 
-    if (!handeyeMatrix) {
-      const yamlPath = path.join(uploadsDir, 'handeye_result.yaml');
-      if (fs.existsSync(yamlPath)) {
-        const yamlText = fs.readFileSync(yamlPath, 'utf-8');
-        handeyeMatrix = parseHandEyeYaml(yamlText);
-      }
-    }
-
-    if (!cameraPoints || cameraPoints.length === 0) {
-      const featurePath = path.join(uploadsDir, 'Feature.txt');
-      if (fs.existsSync(featurePath)) {
-        const featureText = fs.readFileSync(featurePath, 'utf-8');
-        cameraPoints = parseFeatureCurve(featureText);
-      }
-    }
-
-    const cfigPath = path.join(uploadsDir, 'Cfig');
-    if (fs.existsSync(cfigPath)) {
-      const cfigText = fs.readFileSync(cfigPath, 'utf-8');
-      config = parseCfigConfig(cfigText);
-    }
-
-    // Default fallback curve points if none provided
-    if (!cameraPoints || cameraPoints.length === 0) {
-      cameraPoints = [
-        { x: 10, y: 20, z: 5 },
-        { x: 20, y: 25, z: 5.2 },
-        { x: 30, y: 30, z: 5.5 },
-        { x: 40, y: 35, z: 5.8 },
-        { x: 50, y: 40, z: 6.0 },
+    let robotPoints = [];
+    if (camPoints.length > 0) {
+      robotPoints = transformPoints(camPoints, matrix);
+    } else {
+      robotPoints = [
+        { x: 673.9846, y: 1349.3547, z: 1173.0933 },
+        { x: 552.5436, y: 1348.2062, z: 1372.8194 },
       ];
     }
 
-    // 2. 4x4 Homogeneous Matrix Transformation (P_robot = T * P_camera)
-    const robotPoints = transformPoints(cameraPoints, handeyeMatrix);
+    const plannedWaypoints = planTrajectory(robotPoints, { zLiftMm: 50 });
+    const quaternions = computePathQuaternions(plannedWaypoints, 45);
 
-    // 3. Trajectory Waypoints & Approach / Retract Planning
-    const plannedWaypoints = planTrajectory(robotPoints, {
-      approachOffsetMm: approachOffset,
-      retractOffsetMm: retractOffset,
-    });
+    const robotTargets = plannedWaypoints.map((pt, i) => ({
+      ...pt,
+      q: quaternions[i] || [1, 0, 0, 0],
+    }));
 
-    // 4. Torch Orientation Quaternion Math [q1, q2, q3, q4]
-    const quaternions = computePathQuaternions(plannedWaypoints, torchAngle);
-
-    // Combine into 6D Target Poses
-    const robotTargets = plannedWaypoints.map((pt, i) => {
-      const q = quaternions[i] || [1, 0, 0, 0];
-      return {
-        name: pt.name,
-        type: pt.type,
-        x: pt.x,
-        y: pt.y,
-        z: pt.z,
-        q1: q[0],
-        q2: q[1],
-        q3: q[2],
-        q4: q[3],
-      };
-    });
-
-    // 5. RAPID Code Compilation
-    const rapidCode = generateRapidCode(robotTargets, {
-      moduleName,
-      speed,
-      tool,
-    });
-
-    // Cache pipeline execution result
-    lastCompiledPipeline = {
-      timestamp: new Date().toISOString(),
-      sourceFile: 'Feature.txt',
-      matrixStatus: 'Mapped via handeye_result.yaml (4x4 Matrix Applied)',
-      handeyeMatrix,
-      cameraPoints,
-      cameraPointsCount: cameraPoints.length,
-      robotPoints,
-      robotPointsCount: robotPoints.length,
-      robotTargets,
-      totalPoints: robotTargets.length,
-      startPoint: robotTargets[0] || null,
-      endPoint: robotTargets[robotTargets.length - 1] || null,
-      rapidCode,
-      config,
-    };
-
-    // Optionally notify connected TCP clients
-    broadcastMessage(`002,PIPELINE_COMPLETE,TARGETS:${robotTargets.length}`);
+    const rapidCode = generateRapidCode(robotTargets);
+    fs.writeFileSync(path.join(uploadsDir, 'latest_rapid.mod'), rapidCode, 'utf-8');
 
     return res.json({
       success: true,
-      message: 'Processing pipeline executed successfully.',
-      pipeline: lastCompiledPipeline,
+      pipeline: {
+        sourceFile: featurePath ? path.basename(featurePath) : 'Default_Fallback.txt',
+        totalPoints: robotTargets.length,
+        matrixStatus: matrix ? `Mapped via ${path.basename(yamlPath)} (4x4 Matrix Applied)` : 'Default Identity Matrix Applied',
+        robotTargets,
+        rapidCode,
+      },
     });
   } catch (err) {
     console.error('Process pipeline error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
-});
+};
+router.post('/process-pipeline', handlePipeline);
+router.get('/process-pipeline', handlePipeline);
 
-/**
- * GET /api/rapid-code
- * Returns compiled RAPID text string
- */
+// Get compiled RAPID code
 router.get('/rapid-code', (req, res) => {
   try {
-    if (lastCompiledPipeline && lastCompiledPipeline.rapidCode) {
-      return res.json({
-        success: true,
-        rapidCode: lastCompiledPipeline.rapidCode,
-        timestamp: lastCompiledPipeline.timestamp,
-      });
+    const rapidPath = path.join(uploadsDir, 'latest_rapid.mod');
+    if (fs.existsSync(rapidPath)) {
+      const rapidCode = fs.readFileSync(rapidPath, 'utf-8');
+      return res.json({ success: true, rapidCode });
     }
-
-    // Default compiled rapid code if pipeline hasn't run yet
-    const defaultTargets = [
-      { name: 'p_approach', type: 'approach', x: 500, y: 10, z: 530, q1: 1, q2: 0, q3: 0, q4: 0 },
-      { name: 'Target_10', type: 'weld', x: 520, y: 20, z: 500, q1: 0.98, q2: 0.1, q3: -0.05, q4: 0.05 },
-      { name: 'Target_20', type: 'weld', x: 550, y: 35, z: 495, q1: 0.96, q2: 0.15, q3: -0.1, q4: 0.05 },
-      { name: 'p_retract', type: 'retract', x: 570, y: 45, z: 530, q1: 1, q2: 0, q3: 0, q4: 0 },
-    ];
-    const defaultCode = generateRapidCode(defaultTargets, { moduleName: 'DefaultWeldModule' });
-
-    return res.json({
-      success: true,
-      rapidCode: defaultCode,
-      note: 'Default compiled template. Run POST /api/process-pipeline for dynamic compilation.',
-    });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('Get RAPID code error:', err.message);
   }
+  return handlePipeline(req, res);
 });
 
-const { exec } = require('child_process');
-
-/**
- * POST /api/launch-robotstudio
- * Saves RAPID module and automatically triggers Windows OS to find and launch RobotStudio.
- */
+// Launch RobotStudio
 router.post('/launch-robotstudio', (req, res) => {
   try {
     const { code, fileName = 'WeldModule.mod' } = req.body || {};
-    if (!code) {
-      return res.status(400).json({ success: false, error: 'No RAPID code provided.' });
-    }
+    if (!code) return res.status(400).json({ success: false, error: 'No RAPID code provided.' });
 
     const filePath = path.join(uploadsDir, fileName);
     fs.writeFileSync(filePath, code, 'utf-8');
 
-    const command = process.platform === 'win32'
-      ? `start "" "${filePath}"`
-      : `open "${filePath}"`;
+    const possiblePaths = [
+      `C:\\Program Files (x86)\\ABB\\RobotStudio 2025\\Bin\\RobotStudio.exe`,
+      `C:\\Program Files (x86)\\ABB\\RobotStudio 2026\\Bin\\RobotStudio.exe`,
+      `C:\\Program Files\\ABB\\RobotStudio 2025\\Bin\\RobotStudio.exe`,
+      `C:\\Program Files\\ABB\\RobotStudio 2024\\Bin\\RobotStudio.exe`,
+      `C:\\Program Files (x86)\\ABB\\RobotStudio\\Bin\\RobotStudio.exe`,
+    ];
 
-    exec(command, (error) => {
-      if (error) {
-        console.warn('RobotStudio not found or failed to launch:', error.message);
+    const robotStudioExe = possiblePaths.find((p) => fs.existsSync(p));
 
-        return res.json({
-          success: false,
-          launched: false,
-          error: 'RobotStudio is not installed or associated on this PC.',
-        });
-      }
-
-      return res.json({
-        success: true,
-        launched: true,
-        message: `Successfully launched RobotStudio with ${fileName}.`,
+    if (robotStudioExe) {
+      exec(`"${robotStudioExe}" "${filePath}"`, (err) => {
+        if (err) console.warn('Error executing RobotStudio:', err.message);
       });
-    });
+      return res.json({ success: true, launched: true });
+    }
+
+    return res.json({ success: false, launched: false });
   } catch (err) {
-    console.error('Launch RobotStudio error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
