@@ -1,9 +1,7 @@
 import axios from "axios";
 
 const axiosClient = axios.create({
-  baseURL: typeof window !== "undefined" 
-    ? `${window.location.origin}/api` 
-    : "http://localhost:3000/api",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
   headers: {
     "Content-Type": "application/json",
   },

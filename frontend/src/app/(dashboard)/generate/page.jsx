@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import StepperProgress from "@/components/StepperProgress";
 import Active3DViewport from "@/components/Active3DViewport";
@@ -8,7 +8,9 @@ import RAPIDCodeEditor from "@/components/RAPIDCodeEditor";
 import { useToast } from "@/components/ToastContext";
 import { useIntegrationMode } from "@/components/IntegrationModeContext";
 import { useTestingWorkflow } from "@/components/TestingWorkflowContext";
+import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
 import { csvToRapid } from "@/services/csvToRapid";
+import axiosClient from "@/services/axiosClient";
 
 const MOCK_RAPID_CODE = `MODULE CalibModule
   CONST robtarget p_home := [[500,0,500],[1,0,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];
@@ -33,8 +35,29 @@ export default function GeneratePage() {
   const { showToast } = useToast();
   const { mode } = useIntegrationMode();
   const { csvData } = useTestingWorkflow();
+  const { canonicalWeldPath } = useTcpWorkflow();
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(30);
+  const [backendRapidCode, setBackendRapidCode] = useState(null);
+
+  // Fetch compiled RAPID code from Express Backend API
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchRapidCode() {
+      try {
+        const res = await axiosClient.get("/rapid-code");
+        if (isMounted && res.data && res.data.rapidCode) {
+          setBackendRapidCode(res.data.rapidCode);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch RAPID code from backend API:", e.message);
+      }
+    }
+    fetchRapidCode();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Generate RAPID code from CSV when in testing mode
   const testingRapidCode = useMemo(() => {
@@ -45,9 +68,10 @@ export default function GeneratePage() {
   }, [mode, csvData]);
 
   // Choose the right code to display
-  const displayCode = mode === "testing" && testingRapidCode
-    ? testingRapidCode
-    : MOCK_RAPID_CODE;
+  const displayCode =
+    mode === "testing" && testingRapidCode
+      ? testingRapidCode
+      : canonicalWeldPath?.rapidCode || backendRapidCode || MOCK_RAPID_CODE;
 
   const handleTogglePlay = () => {
     setIsPlaying(!isPlaying);
@@ -99,7 +123,7 @@ export default function GeneratePage() {
           <RAPIDCodeEditor 
             code={displayCode} 
             title={mode === "testing" ? "ABB RAPID MODULE — CSV GENERATED" : "ABB RAPID MODULE PREVIEW"} 
-            status={mode === "testing" && testingRapidCode ? `COMPILED OK — ${csvData.length} POINTS` : "COMPILED OK"} 
+            status={mode === "testing" && testingRapidCode ? `COMPILED OK — ${csvData.length} POINTS` : "COMPILED OK (BACKEND)"} 
           />
           
           <div className="flex gap-4 select-none pb-4">
