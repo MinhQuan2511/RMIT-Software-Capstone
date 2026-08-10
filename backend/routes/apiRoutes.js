@@ -259,4 +259,47 @@ router.get('/rapid-code', (req, res) => {
   }
 });
 
+const { exec } = require('child_process');
+
+/**
+ * POST /api/launch-robotstudio
+ * Saves RAPID module and automatically triggers Windows OS to find and launch RobotStudio.
+ */
+router.post('/launch-robotstudio', (req, res) => {
+  try {
+    const { code, fileName = 'WeldModule.mod' } = req.body || {};
+    if (!code) {
+      return res.status(400).json({ success: false, error: 'No RAPID code provided.' });
+    }
+
+    const filePath = path.join(uploadsDir, fileName);
+    fs.writeFileSync(filePath, code, 'utf-8');
+
+    const command = process.platform === 'win32'
+      ? `start "" "${filePath}"`
+      : `open "${filePath}"`;
+
+    exec(command, (error) => {
+      if (error) {
+        console.warn('RobotStudio not found or failed to launch:', error.message);
+
+        return res.json({
+          success: false,
+          launched: false,
+          error: 'RobotStudio is not installed or associated on this PC.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        launched: true,
+        message: `Successfully launched RobotStudio with ${fileName}.`,
+      });
+    });
+  } catch (err) {
+    console.error('Launch RobotStudio error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
