@@ -34,7 +34,6 @@ export default function ParseMapPage() {
   const [mappingComplete, setMappingComplete] = useState(false);
   const [pipelineData, setPipelineData] = useState(null);
 
-  // Fetch real process-pipeline data on mount or when page loads
   useEffect(() => {
     let cancelled = false;
     async function loadPipelineData() {
@@ -49,7 +48,6 @@ export default function ParseMapPage() {
     }
     loadPipelineData();
 
-    // Run pipeline step completion animation
     const runAnimation = async () => {
       for (let i = 0; i < PIPELINE_STEPS.length; i++) {
         if (cancelled) return;
@@ -58,7 +56,7 @@ export default function ParseMapPage() {
           next[i] = "processing";
           return next;
         });
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 300));
         if (cancelled) return;
         setPipelineStatuses((prev) => {
           const next = [...prev];
@@ -74,7 +72,6 @@ export default function ParseMapPage() {
     };
   }, []);
 
-  // Compute active dataset metrics
   const activeTargets = useMemo(() => {
     if (pipelineData?.robotTargets && pipelineData.robotTargets.length > 0) {
       return pipelineData.robotTargets;
@@ -85,23 +82,27 @@ export default function ParseMapPage() {
     if (rawPayload?.pathPoints && rawPayload.pathPoints.length > 0) {
       return rawPayload.pathPoints;
     }
-    // Fallback default points
     return [
-      { name: "p_approach", x: 130.8, y: 260.4, z: 440.8, q1: 1, q2: 0, q3: 0, q4: 0, type: "approach" },
-      { name: "Target_10", x: 130.9, y: 260.7, z: 415.8, q1: 0.98, q2: 0.1, q3: -0.05, q4: 0.05, type: "weld" },
-      { name: "Target_20", x: 141.2, y: 265.8, z: 416.0, q1: 0.96, q2: 0.15, q3: -0.1, q4: 0.05, type: "weld" },
-      { name: "Target_30", x: 150.5, y: 271.2, z: 416.3, q1: 0.94, q2: 0.2, q3: -0.15, q4: 0.05, type: "weld" },
-      { name: "Target_40", x: 160.9, y: 275.5, z: 416.6, q1: 0.92, q2: 0.22, q3: -0.18, q4: 0.05, type: "weld" },
-      { name: "Target_50", x: 170.4, y: 280.2, z: 416.8, q1: 0.90, q2: 0.25, q3: -0.2, q4: 0.05, type: "weld" },
-      { name: "p_retract", x: 170.4, y: 280.2, z: 446.8, q1: 1, q2: 0, q3: 0, q4: 0, type: "retract" },
+      { name: "p_approach", x: 699.9, y: 1349.6, z: 1283.1, type: "approach" },
+      { name: "Target_10", x: 673.9, y: 1349.3, z: 1173.0, type: "weld" },
+      { name: "Target_20", x: 552.5, y: 1348.2, z: 1372.8, type: "weld" },
+      { name: "p_retract", x: 526.5, y: 1347.9, z: 1402.8, type: "retract" },
     ];
   }, [pipelineData, canonicalWeldPath, rawPayload]);
+
+  // Filter to select only the points located on the actual weld path (exclude in-air approach and retract points).
+  const actualWeldPoints = useMemo(() => {
+    const filtered = activeTargets.filter(p => p.type === 'weld' || (p.name && p.name.startsWith('Target_')));
+    return filtered.length > 0 ? filtered : activeTargets.slice(1, -1);
+  }, [activeTargets]);
 
   const sourceFile = pipelineData?.sourceFile || canonicalWeldPath?.source || "Feature.txt";
   const totalPoints = activeTargets.length;
   const statusString = pipelineData?.matrixStatus || "Mapped via handeye_result.yaml (4x4 Matrix Applied)";
-  const startPoint = activeTargets[0] || { x: 0, y: 0, z: 0 };
-  const endPoint = activeTargets[activeTargets.length - 1] || { x: 0, y: 0, z: 0 };
+  
+  // Accurately displays the start and end points of the actual weld.
+  const weldStartPoint = actualWeldPoints[0] || activeTargets[0] || { x: 0, y: 0, z: 0 };
+  const weldEndPoint = actualWeldPoints[actualWeldPoints.length - 1] || activeTargets[activeTargets.length - 1] || { x: 0, y: 0, z: 0 };
 
   const handleApplyMapping = async () => {
     setProcessing(true);
@@ -127,7 +128,7 @@ export default function ParseMapPage() {
         `Canonical WeldPath model created with ${totalPoints} points using handeye_result.yaml transformation matrix.`,
         "success"
       );
-      setTimeout(() => router.push("/generate"), 800);
+      setTimeout(() => router.push("/generate"), 600);
     } catch {
       showToast("❌ Mapping Error", "Failed to map payload to canonical model.", "error");
     } finally {
@@ -135,42 +136,32 @@ export default function ParseMapPage() {
     }
   };
 
-  // Helper function to project 3D point (x,y,z) to 2D SVG canvas (550x220)
-  const project3DTo2D = (pt, minX, maxX, minY, maxY, minZ, maxZ) => {
+  const project3DTo2D = (pt, minX, maxX, minY, maxY) => {
     const rangeX = maxX - minX || 1;
     const rangeY = maxY - minY || 1;
     const normX = (pt.x - minX) / rangeX;
     const normY = (pt.y - minY) / rangeY;
-
-    // SVG canvas dimensions: width 550, height 220
     const canvasX = 60 + normX * 430;
     const canvasY = 170 - normY * 110;
     return { x: canvasX, y: canvasY };
   };
 
-  // Calculate 3D bounds for SVG scaling
   const bounds = useMemo(() => {
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-
     activeTargets.forEach((p) => {
       if (p.x < minX) minX = p.x;
       if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y;
       if (p.y > maxY) maxY = p.y;
-      if (p.z < minZ) minZ = p.z;
-      if (p.z > maxZ) maxZ = p.z;
     });
-
-    return { minX, maxX, minY, maxY, minZ, maxZ };
+    return { minX, maxX, minY, maxY };
   }, [activeTargets]);
 
   const projectedPoints = useMemo(() => {
-    return activeTargets.map((pt) => project3DTo2D(pt, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY, bounds.minZ, bounds.maxZ));
+    return activeTargets.map((pt) => project3DTo2D(pt, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY));
   }, [activeTargets, bounds]);
 
-  // Construct SVG Path String connecting all 3D points
   const svgPolylinePoints = useMemo(() => {
     return projectedPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
   }, [projectedPoints]);
@@ -206,23 +197,23 @@ export default function ParseMapPage() {
                 <span className="block font-mono font-bold text-on-surface mt-0.5">{sourceFile}</span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">TOTAL POINTS</span>
-                <span className="block font-mono font-bold text-primary mt-0.5">{totalPoints} Points</span>
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">TOTAL WAYPOINTS</span>
+                <span className="block font-mono font-bold text-primary mt-0.5">{totalPoints} Targets</span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest col-span-2">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">STATUS</span>
                 <span className="block font-mono font-bold text-green-600 mt-0.5">{statusString}</span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">START POINT (X,Y,Z)</span>
-                <span className="block font-mono font-bold text-on-surface mt-0.5">
-                  [{startPoint.x?.toFixed(1)}, {startPoint.y?.toFixed(1)}, {startPoint.z?.toFixed(1)}]
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD START (Target_10)</span>
+                <span className="block font-mono font-bold text-emerald-600 mt-0.5">
+                  [{weldStartPoint.x?.toFixed(1)}, {weldStartPoint.y?.toFixed(1)}, {weldStartPoint.z?.toFixed(1)}]
                 </span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">END POINT (X,Y,Z)</span>
-                <span className="block font-mono font-bold text-on-surface mt-0.5">
-                  [{endPoint.x?.toFixed(1)}, {endPoint.y?.toFixed(1)}, {endPoint.z?.toFixed(1)}]
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD END (Target_20)</span>
+                <span className="block font-mono font-bold text-red-600 mt-0.5">
+                  [{weldEndPoint.x?.toFixed(1)}, {weldEndPoint.y?.toFixed(1)}, {weldEndPoint.z?.toFixed(1)}]
                 </span>
               </div>
             </div>
@@ -298,7 +289,7 @@ export default function ParseMapPage() {
         </div>
       </div>
 
-      {/* Right Viewport (Dynamic 3D Seam Trajectory Visualizer) */}
+      {/* Right Viewport */}
       <Active3DViewport
         title={`Parsed 3D Weld Seam Trajectory [${sourceFile} — ${totalPoints} Points]`}
         showSolidControls
@@ -308,7 +299,6 @@ export default function ParseMapPage() {
           <div className="absolute inset-0 viewport-grid"></div>
 
           <div className="relative z-10 w-full max-w-[750px] px-6">
-            {/* Real 3D Trajectory Projection Canvas */}
             <div className="bg-surface/90 border border-outline-variant/40 rounded-xl p-5 mb-4 shadow-lg backdrop-blur-md">
               <div className="flex items-center justify-between mb-3 border-b border-outline-variant/30 pb-2">
                 <div className="flex items-center gap-2">
@@ -323,12 +313,10 @@ export default function ParseMapPage() {
               </div>
 
               <svg viewBox="0 0 550 220" className="w-full h-56 bg-surface-container-lowest/50 rounded-lg border border-outline-variant/20">
-                {/* Background Grid Lines */}
                 {[40, 80, 120, 160, 200].map((y, i) => (
                   <line key={i} x1="30" y1={y} x2="520" y2={y} stroke="#94a3b8" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.3" />
                 ))}
 
-                {/* Real Trajectory Line connecting parsed points */}
                 <polyline
                   fill="none"
                   stroke="#3b82f6"
@@ -336,7 +324,6 @@ export default function ParseMapPage() {
                   points={svgPolylinePoints}
                 />
 
-                {/* Draw 3D Point Markers */}
                 {projectedPoints.map((pt, i) => (
                   <g key={i}>
                     <circle
@@ -350,7 +337,6 @@ export default function ParseMapPage() {
                   </g>
                 ))}
 
-                {/* START POINT Marker (GREEN) */}
                 {projectedPoints[0] && (
                   <g transform={`translate(${projectedPoints[0].x}, ${projectedPoints[0].y})`}>
                     <line x1="0" y1="0" x2="0" y2="-22" stroke="#10b981" strokeWidth="1.5" strokeDasharray="2,2" />
@@ -361,7 +347,6 @@ export default function ParseMapPage() {
                   </g>
                 )}
 
-                {/* END POINT Marker (RED) */}
                 {projectedPoints[projectedPoints.length - 1] && (
                   <g transform={`translate(${projectedPoints[projectedPoints.length - 1].x}, ${projectedPoints[projectedPoints.length - 1].y})`}>
                     <line x1="0" y1="0" x2="0" y2="22" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="2,2" />
@@ -372,7 +357,6 @@ export default function ParseMapPage() {
                   </g>
                 )}
 
-                {/* Axis Indicator */}
                 <g transform="translate(45, 195)">
                   <line x1="0" y1="0" x2="20" y2="0" stroke="#ef4444" strokeWidth="2" />
                   <line x1="0" y1="0" x2="0" y2="-20" stroke="#3b82f6" strokeWidth="2" />
@@ -382,7 +366,6 @@ export default function ParseMapPage() {
               </svg>
             </div>
 
-            {/* Legend & Status Cards */}
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="bg-surface/90 border border-outline-variant/30 rounded-lg p-3">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Source File</span>
@@ -395,25 +378,6 @@ export default function ParseMapPage() {
               <div className="bg-surface/90 border border-outline-variant/30 rounded-lg p-3">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Transformation Matrix</span>
                 <span className="block text-[10px] font-mono font-bold text-on-surface mt-1">4x4 Hand-Eye Matrix Applied</span>
-              </div>
-            </div>
-
-            {/* Legend */}
-            <div className="bg-surface/90 border border-outline-variant/30 rounded-lg p-3">
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Trajectory Map Legend</span>
-              <div className="grid grid-cols-3 gap-2 mt-1.5">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-[#10b981]"></div>
-                  <span className="text-[10px] text-on-surface-variant">START Point (First Coeff)</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-[#ef4444]"></div>
-                  <span className="text-[10px] text-on-surface-variant">END Point (Last Coeff)</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-[#3b82f6]"></div>
-                  <span className="text-[10px] text-on-surface-variant">3D Transformed Waypoints</span>
-                </div>
               </div>
             </div>
           </div>
