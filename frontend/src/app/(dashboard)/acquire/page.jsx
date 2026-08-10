@@ -164,14 +164,19 @@ export default function AcquirePage() {
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden w-full h-full relative bg-slate-950">
+    <div className="flex-1 flex w-full h-full relative bg-slate-950">
       {/* Left Panel (Kept Original) */}
-      <div className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-4 shrink-0 z-40 overflow-y-auto">
+      <div className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-3 shrink-0 z-40 overflow-y-auto">
         <div className="px-1 select-none">
           <h2 className="text-xl font-extrabold text-on-surface tracking-tight">Acquisition Method</h2>
           <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">Choose whether weld data is acquired from a live TCP stream or output files.</p>
         </div>
-        <StepperProgress />
+        
+        {/* Stepper Progress - Positioned OUTSIDE conditionals with proper overflow */}
+        <div className="w-full overflow-visible">
+          <StepperProgress />
+        </div>
+        
         <div className="h-px w-full bg-outline-variant/60 my-1 opacity-50"></div>
         <div className="flex-1 flex flex-col gap-5 pb-6">
           {/* Card 1: Input Method */}
