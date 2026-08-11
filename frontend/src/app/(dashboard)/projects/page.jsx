@@ -1,9 +1,23 @@
 "use client";
 
-import React from "react";
-import Link from "next/link";
+import React, { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
 
 export default function ProjectsPage() {
+  const router = useRouter();
+  const { resetWorkflowSession } = useTcpWorkflow();
+
+  // Reset workflow session as soon as user enters Workspace (Step 1)
+  useEffect(() => {
+    resetWorkflowSession();
+  }, [resetWorkflowSession]);
+
+  const handleSelectProject = () => {
+    resetWorkflowSession();
+    router.push("/bridge-setup");
+  };
+
   return (
     <main className="flex-1 bg-background overflow-y-auto p-margin-desktop w-full h-full">
       <div className="max-w-[1600px] mx-auto w-full">
@@ -17,10 +31,14 @@ export default function ProjectsPage() {
           </div>
         </header>
 
-        {/* Project Grid layout */}
+        {/* Project Grid Layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-gutter">
           {/* Create New Action Card */}
-          <button className="flex flex-col items-center justify-center min-h-[280px] bg-surface-container-lowest border-2 border-dashed border-outline hover:border-primary hover:bg-surface-container-low transition-all duration-200 rounded-xl group p-6 cursor-pointer">
+          <button
+            type="button"
+            onClick={handleSelectProject}
+            className="flex flex-col items-center justify-center min-h-[280px] bg-surface-container-lowest border-2 border-dashed border-outline hover:border-primary hover:bg-surface-container-low transition-all duration-200 rounded-xl group p-6 cursor-pointer text-left w-full"
+          >
             <div className="w-16 h-16 rounded-full bg-primary-fixed flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <span className="material-symbols-outlined text-on-primary-fixed text-3xl">add</span>
             </div>
@@ -33,9 +51,10 @@ export default function ProjectsPage() {
           </button>
 
           {/* Project Card 1: Part_A_Fillet_Weld */}
-          <Link
-            href="/calibrate"
-            className="flex flex-col bg-surface-container-lowest border border-outline-variant shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden cursor-pointer group"
+          <button
+            type="button"
+            onClick={handleSelectProject}
+            className="flex flex-col bg-surface-container-lowest border border-outline-variant shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden cursor-pointer group text-left w-full"
           >
             <div 
               className="h-48 w-full relative bg-surface-container-high overflow-hidden" 
@@ -51,7 +70,7 @@ export default function ProjectsPage() {
                 <span>Ready</span>
               </div>
             </div>
-            <div className="p-5 flex-1 flex flex-col justify-between">
+            <div className="p-5 flex-1 flex flex-col justify-between w-full">
               <div>
                 <h3 className="text-lg text-on-surface font-extrabold mb-1 group-hover:text-primary transition-colors tracking-tight">
                   Part_A_Fillet_Weld
@@ -68,12 +87,13 @@ export default function ProjectsPage() {
                 </div>
               </div>
             </div>
-          </Link>
+          </button>
 
           {/* Project Card 2: Bracket_B_Lap_Joint */}
-          <Link
-            href="/calibrate"
-            className="flex flex-col bg-surface-container-lowest border border-outline-variant shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden cursor-pointer group"
+          <button
+            type="button"
+            onClick={handleSelectProject}
+            className="flex flex-col bg-surface-container-lowest border border-outline-variant shadow-sm hover:shadow-md transition-shadow rounded-xl overflow-hidden cursor-pointer group text-left w-full"
           >
             <div 
               className="h-48 w-full relative bg-surface-container-high overflow-hidden" 
@@ -89,7 +109,7 @@ export default function ProjectsPage() {
                 <span>Draft</span>
               </div>
             </div>
-            <div className="p-5 flex-1 flex flex-col justify-between">
+            <div className="p-5 flex-1 flex flex-col justify-between w-full">
               <div>
                 <h3 className="text-lg text-on-surface font-extrabold mb-1 group-hover:text-primary transition-colors tracking-tight">
                   Bracket_B_Lap_Joint
@@ -106,7 +126,7 @@ export default function ProjectsPage() {
                 </div>
               </div>
             </div>
-          </Link>
+          </button>
         </div>
       </div>
     </main>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
@@ -12,9 +12,15 @@ import { saveBridgeConfig } from "@/services/tracerStudioTcpBridge";
 export default function BridgeSetupPage() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { bridgeConfig, updateBridgeConfig, updateProgress } = useTcpWorkflow();
+  const {
+    bridgeConfig,
+    updateBridgeConfig,
+    updateProgress,
+    workflowMode,
+    setWorkflowMode,
+    setAcquisition,
+  } = useTcpWorkflow();
 
-  // Initialize form state from config or defaults
   const [config, setConfig] = useState(
     bridgeConfig || {
       host: "127.0.0.1",
@@ -37,6 +43,40 @@ export default function BridgeSetupPage() {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
+
+  // Automatically trigger decision modal if workflow mode is undecided
+  const [showModal, setShowModal] = useState(false);
+
+  useEffect(() => {
+    if (workflowMode === "undecided" || !workflowMode) {
+      setShowModal(true);
+    }
+  }, [workflowMode]);
+
+  const handleChooseTcpMode = () => {
+    setWorkflowMode("tcp");
+    setAcquisition("live-tcp");
+    updateProgress({ bridgeSetupComplete: true, step2Complete: true });
+    setShowModal(false);
+    showToast(
+      "📡 Live TCP Stream Selected",
+      "Bridge Setup unlocked. Configure endpoint parameters and proceed to Connect.",
+      "info"
+    );
+  };
+
+  const handleChooseFileMode = () => {
+    setWorkflowMode("file");
+    setAcquisition("manual");
+    updateProgress({ bridgeSetupComplete: true, step2Complete: true });
+    setShowModal(false);
+    showToast(
+      "📁 File / Manual Import Selected",
+      "Bypassing TCP Bridge and Connect steps. Routing directly to Acquire...",
+      "success"
+    );
+    router.push("/acquire");
+  };
 
   const validate = () => {
     const newErrors = {};
@@ -62,13 +102,14 @@ export default function BridgeSetupPage() {
       const result = await saveBridgeConfig(config);
       if (result.success) {
         updateBridgeConfig(config);
-        updateProgress({ bridgeConfigSaved: true });
+        updateProgress({ bridgeSetupComplete: true, step2Complete: true });
         setConfigSaved(true);
         showToast(
           "✓ Bridge Configuration Saved",
-          "Endpoint and protocol settings have been stored locally.",
+          "Endpoint settings stored. Step 3 (Connect) is now unlocked.",
           "success"
         );
+        router.push("/connect");
       }
     } catch {
       showToast("❌ Save Error", "Failed to save bridge configuration.", "error");
@@ -89,16 +130,94 @@ export default function BridgeSetupPage() {
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden w-full h-full relative">
-      {/* Left Panel */}
+    <div className="flex-1 flex overflow-hidden w-full h-full relative bg-slate-950">
+      {/* Step 2 Decision Modal Overlay */}
+      {showModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest border border-outline-variant rounded-2xl shadow-2xl max-w-lg w-full p-6 flex flex-col gap-6 select-none animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-primary flex items-center justify-center border border-primary/20 shrink-0">
+                <span className="material-symbols-outlined text-2xl">alt_route</span>
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-on-surface">Select Data Ingestion Mode</h3>
+                <p className="text-xs text-on-surface-variant font-medium mt-1">
+                  Choose how scan trajectories will be supplied to the pipeline.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3.5">
+              {/* Choice A: Live TCP Stream */}
+              <button
+                type="button"
+                onClick={handleChooseTcpMode}
+                className="p-4 rounded-xl border border-outline-variant hover:border-primary bg-surface hover:bg-primary/5 flex items-start gap-4 text-left transition-all cursor-pointer group"
+              >
+                <div className="w-10 h-10 rounded-lg bg-blue-500/10 text-primary flex items-center justify-center border border-primary/20 shrink-0 group-hover:bg-primary group-hover:text-white transition-colors">
+                  <span className="material-symbols-outlined text-xl">sensors</span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-bold text-xs text-on-surface uppercase tracking-wide">
+                      Configure Live TCP Socket Stream
+                    </h4>
+                    <span className="bg-blue-500/10 text-blue-500 text-[9px] font-extrabold px-2 py-0.5 rounded uppercase">
+                      Steps 2 & 3 Required
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant mt-1.5 leading-relaxed">
+                    Set up direct socket endpoint (Port 7001) to receive real-time point clouds from TracerStudio or RobotStudio Add-in.
+                  </p>
+                </div>
+              </button>
+
+              {/* Choice B: File / Manual Import */}
+              <button
+                type="button"
+                onClick={handleChooseFileMode}
+                className="p-4 rounded-xl border border-outline-variant hover:border-primary bg-surface hover:bg-emerald-500/5 flex items-start gap-4 text-left transition-all cursor-pointer group"
+              >
+                <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                  <span className="material-symbols-outlined text-xl">upload_file</span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-bold text-xs text-on-surface uppercase tracking-wide">
+                      File / Manual Import
+                    </h4>
+                    <span className="bg-emerald-500/10 text-emerald-600 text-[9px] font-extrabold px-2 py-0.5 rounded uppercase">
+                      Bypasses Step 3
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant mt-1.5 leading-relaxed">
+                    Directly import local scan files (<code className="text-emerald-600 font-bold">Feature.txt</code>, <code className="text-emerald-600 font-bold">handeye_result.yaml</code>). Skips TCP setup and routes immediately to Step 4.
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Left Control Panel */}
       <div className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-4 shrink-0 z-40 overflow-y-auto">
-        <div className="px-1 select-none">
-          <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
-            TracerStudio TCP Bridge Setup
-          </h2>
-          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
-            Configure a direct TCP bridge to TracerStudio when the native API is unavailable.
-          </p>
+        <div className="px-1 select-none flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
+              TracerStudio TCP Bridge Setup
+            </h2>
+            <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
+              Configure a direct TCP bridge to TracerStudio when native API is active.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="text-[10px] font-bold text-primary bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-colors border border-primary/20 cursor-pointer shrink-0"
+          >
+            Change Mode
+          </button>
         </div>
 
         <StepperProgress />
@@ -327,7 +446,7 @@ export default function BridgeSetupPage() {
           <button
             type="submit"
             disabled={saving}
-            className="w-full bg-primary hover:bg-on-primary-fixed-variant disabled:bg-surface-container-high disabled:text-on-surface-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm"
+            className="w-full bg-primary hover:bg-on-primary-fixed-variant disabled:bg-surface-container-high disabled:text-on-surface-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
           >
             {saving ? (
               <>
@@ -351,86 +470,77 @@ export default function BridgeSetupPage() {
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>
               Back to Project
             </Link>
-            <Link
-              href="/connect"
-              className={`flex-1 bg-primary hover:bg-on-primary-fixed-variant disabled:bg-surface-container-high disabled:text-on-surface-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm ${!configSaved ? "opacity-50 cursor-not-allowed" : ""}`}
+            <button
+              type="button"
+              onClick={handleSave}
+              className={`flex-1 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-4 py-3.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer ${
+                !configSaved && !bridgeConfig ? "opacity-75" : ""
+              }`}
             >
               Next Step
               <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-            </Link>
+            </button>
           </div>
         </form>
       </div>
 
-      {/* Right Viewport */}
-      <Active3DViewport
-        title="Bridge Architecture Visualizer"
-        showSolidControls
-      >
+      {/* Right Viewport Architecture Diagram */}
+      <Active3DViewport title="Bridge Architecture Visualizer" showSolidControls>
         <div className="w-full h-full flex flex-col items-center justify-center relative">
-          {/* Dark viewport with grid */}
           <div className="absolute inset-0 bg-3d-viewport"></div>
           <div className="absolute inset-0 viewport-grid"></div>
 
-          {/* Architecture Diagram */}
           <div className="relative z-10 w-full max-w-[700px] px-8">
-            {/* Three Nodes Row */}
             <div className="flex items-center justify-between mb-12">
-              {/* Node 1: RobotStudio Add-in */}
               <div className="flex flex-col items-center gap-3">
-                <div className="w-40 h-28 border-2 border-blue-400/60 rounded-xl bg-blue-900/20 flex flex-col items-center justify-center gap-2 backdrop-blur-sm">
+                <div className="w-40 h-28 border-2 border-blue-400/60 rounded-xl bg-blue-900/20 flex flex-col items-center justify-center gap-2 backdrop-blur-sm shadow-xl">
                   <span className="material-symbols-outlined text-blue-400 text-2xl">robot</span>
                   <span className="text-[10px] font-bold text-blue-300 font-mono">RobotStudio Add-in</span>
                 </div>
               </div>
 
-              {/* Arrow 1 */}
               <div className="flex-1 mx-4 flex flex-col items-center">
                 <div className="w-full h-px bg-teal-400/40 relative">
                   <div className="absolute right-0 -top-1 w-2 h-2 border-t-2 border-r-2 border-teal-400/60 rotate-45"></div>
                 </div>
-                <div className="flex flex-col gap-0.5 mt-1">
+                <div className="flex flex-col gap-0.5 mt-1 text-center">
                   <span className="text-[9px] font-mono text-teal-400/70">Pose Stream</span>
                   <span className="text-[9px] font-mono text-teal-400/70">Controller State</span>
                   <span className="text-[9px] font-mono text-teal-400/70">Commands</span>
                 </div>
               </div>
 
-              {/* Node 2: TCP Bridge */}
               <div className="flex flex-col items-center gap-3">
-                <div className="w-40 h-28 border-2 border-teal-400/60 rounded-xl bg-teal-900/20 flex flex-col items-center justify-center gap-2 backdrop-blur-sm">
+                <div className="w-40 h-28 border-2 border-teal-400/60 rounded-xl bg-teal-900/20 flex flex-col items-center justify-center gap-2 backdrop-blur-sm shadow-xl">
                   <span className="material-symbols-outlined text-teal-400 text-2xl">hub</span>
                   <span className="text-[10px] font-bold text-teal-300 font-mono">TCP Bridge</span>
                 </div>
               </div>
 
-              {/* Arrow 2 */}
               <div className="flex-1 mx-4 flex flex-col items-center">
                 <div className="w-full h-px bg-purple-400/40 relative">
                   <div className="absolute right-0 -top-1 w-2 h-2 border-t-2 border-r-2 border-purple-400/60 rotate-45"></div>
                 </div>
-                <div className="flex flex-col gap-0.5 mt-1">
+                <div className="flex flex-col gap-0.5 mt-1 text-center">
                   <span className="text-[9px] font-mono text-purple-400/70">Commands 011</span>
                   <span className="text-[9px] font-mono text-purple-400/70">012 / 021</span>
                 </div>
               </div>
 
-              {/* Node 3: TracerStudio Service */}
               <div className="flex flex-col items-center gap-3">
-                <div className="w-40 h-28 border-2 border-purple-400/60 rounded-xl bg-purple-900/20 flex flex-col items-center justify-center gap-2 backdrop-blur-sm">
+                <div className="w-40 h-28 border-2 border-purple-400/60 rounded-xl bg-purple-900/20 flex flex-col items-center justify-center gap-2 backdrop-blur-sm shadow-xl">
                   <span className="material-symbols-outlined text-purple-400 text-2xl">dns</span>
                   <span className="text-[10px] font-bold text-purple-300 font-mono">TracerStudio</span>
                 </div>
               </div>
             </div>
 
-            {/* Return Arrow */}
             <div className="flex items-center justify-between mx-8 mb-8">
               <div className="flex-1 mx-4 flex flex-col items-center">
                 <div className="w-full h-px bg-green-400/30 relative">
                   <div className="absolute left-0 -top-1 w-2 h-2 border-b-2 border-l-2 border-green-400/60 -rotate-45"></div>
                 </div>
-                <div className="flex flex-col gap-0.5 mt-1">
+                <div className="flex flex-col gap-0.5 mt-1 text-center">
                   <span className="text-[9px] font-mono text-green-400/70">Acknowledgements</span>
                   <span className="text-[9px] font-mono text-green-400/70">Status</span>
                   <span className="text-[9px] font-mono text-green-400/70">Parsed Path</span>
@@ -438,7 +548,6 @@ export default function BridgeSetupPage() {
               </div>
             </div>
 
-            {/* Small Panels */}
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-surface/80 border border-outline-variant/30 rounded-lg p-3">
                 <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Controller Pose</span>
