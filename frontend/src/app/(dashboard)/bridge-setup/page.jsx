@@ -109,7 +109,7 @@ export default function BridgeSetupPage() {
           "Endpoint settings stored. Step 3 (Connect) is now unlocked.",
           "success"
         );
-        router.push("/connect");
+        router.push(workflowMode === "file" ? "/acquire" : "/connect");
       }
     } catch {
       showToast("❌ Save Error", "Failed to save bridge configuration.", "error");
@@ -477,7 +477,7 @@ export default function BridgeSetupPage() {
                 !configSaved && !bridgeConfig ? "opacity-75" : ""
               }`}
             >
-              Next Step
+              {workflowMode === "file" ? "Skip to Acquire" : "Next Step"}
               <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
             </button>
           </div>

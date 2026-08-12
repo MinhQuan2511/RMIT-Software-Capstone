@@ -23,6 +23,7 @@ export default function AcquirePage() {
     updateProgress,
     rawPayload,
     connectionStatus,
+    workflowMode,
   } = useTcpWorkflow();
 
   const [requestType, setRequestType] = useState("011 Single Trajectory");
@@ -286,7 +287,7 @@ export default function AcquirePage() {
           </button>
 
           <div className="flex gap-4 select-none">
-            <Link href="/connect" className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm">
+            <Link href={workflowMode === "file" ? "/bridge-setup" : "/connect"} className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm">
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>Back
             </Link>
             <button onClick={handleNextStep} className="flex-1 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm cursor-pointer">

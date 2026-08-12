@@ -29,7 +29,15 @@ export default function ConnectPage() {
     lastResponse,
     setLastResponse,
     updateProgress,
+    workflowMode,
   } = useTcpWorkflow();
+
+  // Route guard: If user chose File/Manual Import mode, Connect is skipped — redirect to Acquire
+  useEffect(() => {
+    if (workflowMode === "file") {
+      router.replace("/acquire");
+    }
+  }, [workflowMode, router]);
 
   const [pinging, setPinging] = useState(false);
   const [actionLoading, setActionLoading] = useState(null);
