@@ -284,12 +284,17 @@ export default function GeneratePage() {
   const { showToast } = useToast();
   const { mode } = useIntegrationMode();
   const { csvData } = useTestingWorkflow();
-  const { canonicalWeldPath, rawPayload } = useTcpWorkflow();
+  const { canonicalWeldPath, rawPayload, updateProgress } = useTcpWorkflow();
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const maxTime = 12;
   const [backendRapidCode, setBackendRapidCode] = useState(null);
+
+  // Mark Generate step as complete so Export & Run (step 7) unlocks in the sidebar
+  useEffect(() => {
+    updateProgress({ generateComplete: true, step6Complete: true });
+  }, [updateProgress]);
 
   // Simulation Timer
   useEffect(() => {
