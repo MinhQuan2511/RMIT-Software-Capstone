@@ -1,6 +1,6 @@
 # Vertex Dynamics: Scan-to-Path Hub
 
-RMIT University Software Engineering Capstone Project, 2026.
+RMIT University Engineering Capstone Project, 2026.
 
 A modular, full-stack web application that bridges 3D vision scanning with industrial ABB robotic arm path generation. The system takes scanned point cloud data from TracerStudio (via REST API, live TCP socket, or manual file upload), processes it through a kinematic pipeline, and compiles executable ABB RAPID code for welding trajectories.
 
@@ -212,73 +212,13 @@ To log out, click the user icon area in the top-right corner of the navbar.
 
 Once logged in, you can switch between three integration modes using the mode switcher in the navbar. Each mode presents a different set of steps in the sidebar, because each one represents a different way of getting scan data into the system.
 
-The three modes are:
+The two modes are:
 
-1. **TracerStudio: API** — Simulates integration through TracerStudio's REST API. This is the traditional workflow: calibrate, configure parameters, preview the path, then generate code.
+1. **TracerStudio: TCP** — Uses a live TCP socket bridge to stream data from TracerStudio or RobotStudio. You configure the bridge endpoint, establish a connection, acquire data (either via live stream or file import), then parse and map it before generating code.
 
-2. **TracerStudio: TCP** — Uses a live TCP socket bridge to stream data from TracerStudio or RobotStudio. You configure the bridge endpoint, establish a connection, acquire data (either via live stream or file import), then parse and map it before generating code.
+2. **Testing** — A simplified path for quick testing. Upload a CSV or Excel file containing XYZ coordinates, preview the parsed path, and jump straight to code generation.
 
-3. **Testing** — A simplified path for quick testing. Upload a CSV or Excel file containing XYZ coordinates, preview the parsed path, and jump straight to code generation.
-
-All three modes share the same **Generate** and **Export & Run** steps at the end.
-
----
-
-### TracerStudio API Workflow
-
-This is the 6-step flow you get in API mode:
-
-**Step 1 — Project (Workspace)**
-Select an existing project or create a new one. The page shows project cards with thumbnails and status. Clicking any card or the "Create New" button moves you forward. This also resets any previous workflow session data.
-
-**Step 2 — Calibrate**
-The hand-eye calibration wizard. You configure:
-- Calibration target type (ChArUco Board, Checkerboard, or Circle Grid)
-- Square size in millimeters
-- Tool Center Point (TCP) offset values (X, Y, Z position and Rx, Ry, Rz rotation in degrees)
-
-Click "Generate Calibration Routine" to run the calibration. The right side of the screen shows a 3D viewport that visualizes the calibration trajectory once generated. You need to complete calibration before the "Next Step" button becomes active.
-
-**Step 3 — Configure**
-Set the welding and scanning parameters:
-- Weld type (Fillet Weld, Lap Joint, Butt Weld)
-- Segment ID
-- Travel speed, laser power, shield gas flow, travel angle
-- Gaussian filter size and step resolution for point cloud smoothing
-
-Click "Apply Parameter Configurations" to save. The viewport on the right visualizes the weld seam path with start and end points. You can then navigate forward to Preview.
-
-**Step 4 — Preview**
-Shows trajectory metrics in the left panel:
-- Total points count
-- Total path distance
-- IK (Inverse Kinematics) solver check result
-- Singularity check result
-
-Toggle options let you turn on/off laser profile visualization and tool normal orientation vectors in the 3D viewport. The viewport renders the point cloud path with interactive controls.
-
-**Step 5 — Generate**
-This is where the RAPID code gets compiled. The left panel shows a syntax-highlighted ABB RAPID code editor displaying the compiled module. The code is fetched from the Express backend's `/api/rapid-code` endpoint.
-
-The right panel is a full 3D simulation environment built with Three.js. It renders:
-- An industrial welding torch (orange with a brass tip)
-- Weld seam geometry (blue cylinder for unwelded, white cylinder that grows as welding progresses)
-- Waypoint markers (green for weld start, red for weld end, grey for approach/retract)
-- Dashed lines for air motion paths
-
-Use the play/pause button at the bottom to run the 12-second welding simulation. You can orbit, zoom, and pan the 3D view with your mouse.
-
-**Step 6 — Export & Run**
-The final step. Here you can:
-1. Download the compiled `.mod` file to your machine
-2. Copy the RAPID code to your clipboard
-3. Attempt to launch ABB RobotStudio on your PC (it searches for the executable at common installation paths)
-
-If RobotStudio is not installed, a dialog appears with a link to download it from ABB's website.
-
-The deployment checklist in the left panel walks you through the manual steps: download the file, open RobotStudio's Program Editor, paste the module, and execute `PROC main()`.
-
-The 3D viewport on the right side also has its own playback controls so you can preview the trajectory one more time before exporting.
+All two modes share the same **Generate** and **Export & Run** steps at the end.
 
 ---
 
@@ -287,7 +227,7 @@ The 3D viewport on the right side also has its own playback controls so you can 
 This is the 7-step flow for TCP socket integration:
 
 **Step 1 — Project**
-Same as API mode. Select or create a project.
+Select or create a project.
 
 **Step 2 — Bridge Setup**
 When you enter this step for the first time, a modal asks you to choose between two data ingestion approaches:
