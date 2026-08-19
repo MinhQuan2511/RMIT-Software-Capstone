@@ -4,6 +4,8 @@ import { ToastProvider } from "@/components/ToastContext";
 import { IntegrationModeProvider } from "@/components/IntegrationModeContext";
 import Navbar from "@/components/Navbar";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Vertex Dynamics: Scan-to-Path Hub",
   description: "Next-Generation 3D Vision & Industrial Robot Integration. RMIT University Capstone 2026.",
@@ -11,7 +13,7 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className="h-full" suppressHydrationWarning>
       <head>
         {/* Load Material Symbols directly in the head */}
         <link 
@@ -23,9 +25,9 @@ export default function RootLayout({ children }) {
         <link 
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" 
           rel="stylesheet" 
-        />
+          />
       </head>
-      <body className="bg-background text-on-background antialiased overflow-hidden h-screen w-screen flex flex-col">
+      <body className="bg-background text-on-background antialiased overflow-hidden h-screen w-screen flex flex-col" suppressHydrationWarning>
         <AuthProvider>
           <IntegrationModeProvider>
             <ToastProvider>
