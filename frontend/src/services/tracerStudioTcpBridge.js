@@ -153,10 +153,10 @@ export async function acquireTrajectory(config, options = {}) {
         templateNumber,
         weldType: "Fillet Weld",
         pathCount: 1,
-        totalPoints: pipeline.robotTargets?.length || 142,
+        totalPoints: pipeline.totalWaypoints || pipeline.waypoints?.length || 5,
         plateThicknessMm: 3.0,
         weldGapMm: 0.8,
-        pathPoints: pipeline.robotTargets || generateMockPathPoints(142),
+        waypoints: pipeline.waypoints || [],
         rapidCode: pipeline.rapidCode,
         timestamp: new Date().toISOString(),
       };
@@ -279,21 +279,22 @@ export async function mapToCanonicalWeldPath(decoded) {
 
     if (res.data && res.data.success) {
       const pipeline = res.data.pipeline;
+      const waypoints = pipeline.waypoints || [];
       const canonical = {
         id: generateUUID(),
         source: decoded.source,
         responseCode: decoded.responseCode,
         weldType: decoded.weldType,
-        coordinateFrame: "WorkObject",
-        approachPoint: pipeline.robotTargets[0] || { x: 520.12, y: 10.5, z: 480.9 },
-        pathPoints: pipeline.robotTargets || decoded.pathPoints,
-        retractPoint: pipeline.robotTargets[pipeline.robotTargets.length - 1] || { x: 560.81, y: 35.6, z: 440.7 },
+        coordinateFrame: "Robot Base Workspace (Direct)",
+        approachPoint: waypoints.find((w) => w.type === "approach") || waypoints[0],
+        waypoints,
+        retractPoint: waypoints.find((w) => w.type === "retract") || waypoints[waypoints.length - 1],
         rapidCode: pipeline.rapidCode,
         plateThicknessMm: decoded.plateThicknessMm,
         weldGapMm: decoded.weldGapMm,
         validationStatus: "valid",
         metadata: {
-          model: "WeldPath v1.0 (Express Backend Matrix Transformed)",
+          model: "WeldPath v1.0 (Direct Feature Extraction — Path_10)",
           generatedAt: new Date().toISOString(),
         },
       };

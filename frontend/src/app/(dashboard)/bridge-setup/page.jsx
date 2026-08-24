@@ -191,7 +191,7 @@ export default function BridgeSetupPage() {
                     </span>
                   </div>
                   <p className="text-[11px] text-on-surface-variant mt-1.5 leading-relaxed">
-                    Directly import local scan files (<code className="text-emerald-600 font-bold">Feature.txt</code>, <code className="text-emerald-600 font-bold">handeye_result.yaml</code>). Skips TCP setup and routes immediately to Step 4.
+                    Directly import local scan files (<code className="text-emerald-600 font-bold">Feature.txt</code>). Skips TCP setup and routes immediately to Step 4.
                   </p>
                 </div>
               </button>

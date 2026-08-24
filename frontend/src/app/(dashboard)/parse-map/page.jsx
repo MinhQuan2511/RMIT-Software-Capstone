@@ -10,11 +10,11 @@ import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
 import axiosClient from "@/services/axiosClient";
 
 const PIPELINE_STEPS = [
-  { label: "Decode Feature.txt Packet", icon: "decode" },
-  { label: "Validate OpenCV YAML Matrix", icon: "check_circle" },
-  { label: "4x4 Matrix Transform (P_robot = T * P_camera)", icon: "transform" },
-  { label: "Calculate ABB Quaternions [q1,q2,q3,q4]", icon: "tune" },
-  { label: "Map to Canonical WeldPath Model", icon: "schema" },
+  { label: "Decode Feature.txt Seam Descriptor", icon: "decode" },
+  { label: "Extract Direct Workspace Coordinates (P_start & P_end)", icon: "pin_drop" },
+  { label: "Synthesize Approach & Retract Vectors (Target_30 & Target_20)", icon: "route" },
+  { label: "Assign Calibrated Tool Orientation ([0, 0, 0.9659, -0.2588])", icon: "tune" },
+  { label: "Compile to Verified RAPID Module (Path_10 Structure)", icon: "terminal" },
 ];
 
 export default function ParseMapPage() {
@@ -72,37 +72,48 @@ export default function ParseMapPage() {
     };
   }, []);
 
+  // Build active waypoints from the pipeline response (new waypoint format: {name, pos, orient, conf, type})
   const activeTargets = useMemo(() => {
-    if (pipelineData?.robotTargets && pipelineData.robotTargets.length > 0) {
-      return pipelineData.robotTargets;
+    if (pipelineData?.waypoints && pipelineData.waypoints.length > 0) {
+      return pipelineData.waypoints;
     }
-    if (canonicalWeldPath?.pathPoints && canonicalWeldPath.pathPoints.length > 0) {
-      return canonicalWeldPath.pathPoints;
+    if (canonicalWeldPath?.waypoints && canonicalWeldPath.waypoints.length > 0) {
+      return canonicalWeldPath.waypoints;
     }
-    if (rawPayload?.pathPoints && rawPayload.pathPoints.length > 0) {
-      return rawPayload.pathPoints;
-    }
+    // Fallback defaults matching the verified RAPID template
     return [
-      { name: "p_approach", x: 699.9, y: 1349.6, z: 1283.1, type: "approach" },
-      { name: "Target_10", x: 673.9, y: 1349.3, z: 1173.0, type: "weld" },
-      { name: "Target_20", x: 552.5, y: 1348.2, z: 1372.8, type: "weld" },
-      { name: "p_retract", x: 526.5, y: 1347.9, z: 1402.8, type: "retract" },
+      { name: "home", pos: [1178.89, 0, 809.42], type: "home" },
+      { name: "Target_40", pos: [414.69, 1112.75, 320.34], type: "weld_start" },
+      { name: "Target_30", pos: [414.69, 1122.75, 343.37], type: "approach" },
+      { name: "Target_20_5", pos: [338.53, 1333.74, 322.07], type: "weld_end" },
+      { name: "Target_20", pos: [338.53, 1344.74, 354.01], type: "retract" },
     ];
-  }, [pipelineData, canonicalWeldPath, rawPayload]);
+  }, [pipelineData, canonicalWeldPath]);
 
-  // Filter to select only the points located on the actual weld path (exclude in-air approach and retract points).
-  const actualWeldPoints = useMemo(() => {
-    const filtered = activeTargets.filter(p => p.type === 'weld' || (p.name && p.name.startsWith('Target_')));
-    return filtered.length > 0 ? filtered : activeTargets.slice(1, -1);
-  }, [activeTargets]);
+  // Extract seam data from pipeline or defaults
+  const seam = pipelineData?.seam || null;
 
-  const sourceFile = pipelineData?.sourceFile || canonicalWeldPath?.source || "Feature.txt";
-  const totalPoints = activeTargets.length;
-  const statusString = pipelineData?.matrixStatus || "Mapped via handeye_result.yaml (4x4 Matrix Applied)";
-  
-  // Accurately displays the start and end points of the actual weld.
-  const weldStartPoint = actualWeldPoints[0] || activeTargets[0] || { x: 0, y: 0, z: 0 };
-  const weldEndPoint = actualWeldPoints[actualWeldPoints.length - 1] || activeTargets[activeTargets.length - 1] || { x: 0, y: 0, z: 0 };
+  // Helper to get x, y, z from either new pos[] format or legacy {x, y, z}
+  const getX = (wp) => wp.pos ? wp.pos[0] : (wp.x ?? 0);
+  const getY = (wp) => wp.pos ? wp.pos[1] : (wp.y ?? 0);
+  const getZ = (wp) => wp.pos ? wp.pos[2] : (wp.z ?? 0);
+
+  const weldStartWP = activeTargets.find((wp) => wp.type === "weld_start") || activeTargets[1];
+  const weldEndWP = activeTargets.find((wp) => wp.type === "weld_end") || activeTargets[3];
+
+  const weldStartDisplay = seam
+    ? `[${seam.startPoint.x.toFixed(2)}, ${seam.startPoint.y.toFixed(2)}, ${seam.startPoint.z.toFixed(2)}]`
+    : weldStartWP
+      ? `[${getX(weldStartWP).toFixed(2)}, ${getY(weldStartWP).toFixed(2)}, ${getZ(weldStartWP).toFixed(2)}]`
+      : "[—]";
+  const weldEndDisplay = seam
+    ? `[${seam.endPoint.x.toFixed(2)}, ${seam.endPoint.y.toFixed(2)}, ${seam.endPoint.z.toFixed(2)}]`
+    : weldEndWP
+      ? `[${getX(weldEndWP).toFixed(2)}, ${getY(weldEndWP).toFixed(2)}, ${getZ(weldEndWP).toFixed(2)}]`
+      : "[—]";
+
+  const sourceFile = pipelineData?.sourceFile || "Feature.txt";
+  const totalWaypoints = activeTargets.length;
 
   const handleApplyMapping = async () => {
     setProcessing(true);
@@ -113,34 +124,35 @@ export default function ParseMapPage() {
         setCanonicalPath({
           id: `canonical_${Date.now()}`,
           source: sourceFile,
-          coordinateFrame: "WorkObject Frame",
-          pathPoints: pipeline.robotTargets,
+          coordinateFrame: "Robot Base Workspace (Direct)",
+          waypoints: pipeline.waypoints,
           rapidCode: pipeline.rapidCode,
-          totalPoints: pipeline.totalPoints,
-          status: statusString,
+          totalWaypoints: pipeline.totalWaypoints,
+          status: "Direct Robot Base Workspace Trajectory (Calibrated by TracerStudio)",
         });
       }
 
       setMappingComplete(true);
       updateProgress({ parseComplete: true });
       showToast(
-        "✓ Payload Mapped",
-        `Canonical WeldPath model created with ${totalPoints} points using handeye_result.yaml transformation matrix.`,
+        "✓ Trajectory Mapped",
+        `Verified RAPID waypoints synthesized — ${totalWaypoints} targets in Path_10 structure.`,
         "success"
       );
       setTimeout(() => router.push("/generate"), 600);
     } catch {
-      showToast("❌ Mapping Error", "Failed to map payload to canonical model.", "error");
+      showToast("❌ Mapping Error", "Failed to synthesize RAPID trajectory.", "error");
     } finally {
       setProcessing(false);
     }
   };
 
+  // SVG projection helpers
   const project3DTo2D = (pt, minX, maxX, minY, maxY) => {
     const rangeX = maxX - minX || 1;
     const rangeY = maxY - minY || 1;
-    const normX = (pt.x - minX) / rangeX;
-    const normY = (pt.y - minY) / rangeY;
+    const normX = (getX(pt) - minX) / rangeX;
+    const normY = (getY(pt) - minY) / rangeY;
     const canvasX = 60 + normX * 430;
     const canvasY = 170 - normY * 110;
     return { x: canvasX, y: canvasY };
@@ -150,10 +162,11 @@ export default function ParseMapPage() {
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
     activeTargets.forEach((p) => {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
+      const px = getX(p), py = getY(p);
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
     });
     return { minX, maxX, minY, maxY };
   }, [activeTargets]);
@@ -172,10 +185,10 @@ export default function ParseMapPage() {
       <div className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-4 shrink-0 z-40 overflow-y-auto">
         <div className="px-1 select-none">
           <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
-            Payload Interpretation & Path Mapping
+            Payload Interpretation & Trajectory Mapping
           </h2>
           <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
-            Decode incoming TracerStudio packets, apply OpenCV 4x4 hand-eye transformation, and convert data into internal weld-path model.
+            Decode incoming TracerStudio Feature descriptors and synthesize verified ABB RAPID motion waypoints (Home, Approach, Weld, Retract).
           </p>
         </div>
 
@@ -198,22 +211,22 @@ export default function ParseMapPage() {
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">TOTAL WAYPOINTS</span>
-                <span className="block font-mono font-bold text-primary mt-0.5">{totalPoints} Targets</span>
+                <span className="block font-mono font-bold text-primary mt-0.5">{totalWaypoints} Targets (Verified RAPID Flow)</span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest col-span-2">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">STATUS</span>
-                <span className="block font-mono font-bold text-green-600 mt-0.5">{statusString}</span>
+                <span className="block font-mono font-bold text-green-600 mt-0.5">Direct Robot Base Workspace Trajectory (Calibrated by TracerStudio)</span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD START (Target_10)</span>
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD START (Target_40)</span>
                 <span className="block font-mono font-bold text-emerald-600 mt-0.5">
-                  [{weldStartPoint.x?.toFixed(1)}, {weldStartPoint.y?.toFixed(1)}, {weldStartPoint.z?.toFixed(1)}]
+                  {weldStartDisplay}
                 </span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD END (Target_20)</span>
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD END (Target_20_5)</span>
                 <span className="block font-mono font-bold text-red-600 mt-0.5">
-                  [{weldEndPoint.x?.toFixed(1)}, {weldEndPoint.y?.toFixed(1)}, {weldEndPoint.z?.toFixed(1)}]
+                  {weldEndDisplay}
                 </span>
               </div>
             </div>
@@ -224,7 +237,7 @@ export default function ParseMapPage() {
             <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
             <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
               <span className="material-symbols-outlined text-[18px] text-primary">pipeline</span>
-              Parsing & Matrix Transformation Pipeline
+              Feature Extraction & RAPID Compilation Pipeline
             </h3>
             <div className="flex flex-col gap-3">
               {PIPELINE_STEPS.map((step, i) => (
@@ -254,7 +267,7 @@ export default function ParseMapPage() {
             {processing ? (
               <>
                 <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
-                Mapping Trajectory...
+                Synthesizing Trajectory...
               </>
             ) : mappingComplete ? (
               <>
@@ -291,7 +304,7 @@ export default function ParseMapPage() {
 
       {/* Right Viewport */}
       <Active3DViewport
-        title={`Parsed 3D Weld Seam Trajectory [${sourceFile} — ${totalPoints} Points]`}
+        title={`Workspace Toolpath Trajectory (Direct Feature Stream)`}
         showSolidControls
       >
         <div className="w-full h-full flex flex-col items-center justify-center relative">
@@ -304,11 +317,11 @@ export default function ParseMapPage() {
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary text-[18px]">3d_rotation</span>
                   <span className="text-xs font-bold text-on-surface font-mono">
-                    Robot Base Frame Trajectory (P_robot = T_handeye * P_camera)
+                    Workspace Toolpath Trajectory (Direct Feature Stream)
                   </span>
                 </div>
                 <span className="text-[10px] font-mono text-green-600 bg-green-500/10 px-2 py-0.5 rounded font-bold">
-                  {totalPoints} Points Parsed
+                  {totalWaypoints} Points Generated
                 </span>
               </div>
 
@@ -342,7 +355,7 @@ export default function ParseMapPage() {
                     <line x1="0" y1="0" x2="0" y2="-22" stroke="#10b981" strokeWidth="1.5" strokeDasharray="2,2" />
                     <rect x="-24" y="-36" width="48" height="16" rx="4" fill="#10b981" />
                     <text x="0" y="-25" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
-                      START
+                      HOME
                     </text>
                   </g>
                 )}
@@ -350,9 +363,9 @@ export default function ParseMapPage() {
                 {projectedPoints[projectedPoints.length - 1] && (
                   <g transform={`translate(${projectedPoints[projectedPoints.length - 1].x}, ${projectedPoints[projectedPoints.length - 1].y})`}>
                     <line x1="0" y1="0" x2="0" y2="22" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="2,2" />
-                    <rect x="-20" y="24" width="40" height="16" rx="4" fill="#ef4444" />
+                    <rect x="-28" y="24" width="56" height="16" rx="4" fill="#ef4444" />
                     <text x="0" y="35" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
-                      END
+                      RETRACT
                     </text>
                   </g>
                 )}
@@ -372,12 +385,12 @@ export default function ParseMapPage() {
                 <span className="block text-xs font-mono font-bold text-primary mt-1">{sourceFile}</span>
               </div>
               <div className="bg-surface/90 border border-outline-variant/30 rounded-lg p-3">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Trajectory Points</span>
-                <span className="block text-xs font-mono font-bold text-green-600 mt-1">{totalPoints} Points</span>
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Trajectory Points</span>
+                <span className="block text-xs font-mono font-bold text-green-600 mt-1">{totalWaypoints} Waypoints (Path_10)</span>
               </div>
               <div className="bg-surface/90 border border-outline-variant/30 rounded-lg p-3">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Transformation Matrix</span>
-                <span className="block text-[10px] font-mono font-bold text-on-surface mt-1">4x4 Hand-Eye Matrix Applied</span>
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Tool Configuration</span>
+                <span className="block text-[10px] font-mono font-bold text-on-surface mt-1">tWeldGun (wobj0)</span>
               </div>
             </div>
           </div>

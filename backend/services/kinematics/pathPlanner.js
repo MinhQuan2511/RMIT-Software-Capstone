@@ -1,103 +1,90 @@
 /**
  * Path Planner & Waypoint Generation Service
- * Handles safe approach vector and strict vertical +Z retract.
+ * Computes the 5 motion waypoints from startPoint and endPoint for ABB RAPID.
+ *
+ * Waypoint sequence (matches verified RAPID template):
+ *   1. home           – Fixed home position
+ *   2. Target_40      – Weld Start (startPoint)
+ *   3. Target_30      – Approach Point (offset from startPoint)
+ *   4. Target_20_5    – Weld End (endPoint)
+ *   5. Target_20      – Retract Point (offset from endPoint)
+ *
+ * All coordinates are used directly — no extra matrix transforms are applied.
  */
 
-function planTrajectory(points, options = {}) {
-  if (!Array.isArray(points) || points.length === 0) {
-    return [];
+/**
+ * @typedef {Object} RobotWaypoint
+ * @property {string}   name   - RAPID robtarget variable name
+ * @property {number[]} pos    - [x, y, z]
+ * @property {number[]} orient - [q1, q2, q3, q4]
+ * @property {number[]} conf   - [cf1, cf4, cf6, cfx]
+ * @property {string}   type   - 'home' | 'weld_start' | 'approach' | 'weld_end' | 'retract'
+ */
+
+/**
+ * Generates the 5 fixed RAPID waypoints from a parsed weld seam.
+ *
+ * @param {{ startPoint: {x,y,z}, endPoint: {x,y,z} }} seam
+ * @returns {RobotWaypoint[]}
+ */
+function planWaypoints(seam) {
+  if (!seam || !seam.startPoint || !seam.endPoint) {
+    throw new Error('pathPlanner: seam must contain startPoint and endPoint');
   }
 
-  const {
-    approachOffsetMm = 50,
-    zLiftMm = 50, 
-    interpolateStepMm = null
-  } = options;
+  const { startPoint, endPoint } = seam;
 
-  let path = [...points];
+  // Shared orientation for all weld-related targets (verified in RobotStudio)
+  const weldOrient = [0, 0, 0.965925826, -0.258819045];
 
-  if (interpolateStepMm && interpolateStepMm > 0) {
-    path = interpolatePoints(path, interpolateStepMm);
-  }
+  return [
+    // 1. Home position (fixed)
+    {
+      name:   'home',
+      pos:    [1178.890158094, 0, 809.419411487],
+      orient: [0.069756473, 0, 0.99756405, 0],
+      conf:   [0, 0, 0, 0],
+      type:   'home',
+    },
 
-  const plannedWaypoints = [];
+    // 2. Target_40 – Weld Start (at startPoint)
+    {
+      name:   'Target_40',
+      pos:    [startPoint.x, startPoint.y, startPoint.z],
+      orient: weldOrient,
+      conf:   [0, 0, 0, 0],
+      type:   'weld_start',
+    },
 
-  // 1. Generate Approach Waypoint 
-  const startPt = path[0];
-  const secondPt = path.length > 1 ? path[1] : { x: startPt.x + 10, y: startPt.y, z: startPt.z };
-  
-  const dxStart = startPt.x - secondPt.x;
-  const dyStart = startPt.y - secondPt.y;
-  const lenXYStart = Math.sqrt(dxStart * dxStart + dyStart * dyStart) || 1.0;
+    // 3. Target_30 – Approach Point (offset from startPoint: Y+10, Z+23.026)
+    {
+      name:   'Target_30',
+      pos:    [startPoint.x, startPoint.y + 10, startPoint.z + 23.026],
+      orient: weldOrient,
+      conf:   [-1, 0, -1, 0],
+      type:   'approach',
+    },
 
-  const approachPt = {
-    x: parseFloat((startPt.x + (dxStart / lenXYStart) * approachOffsetMm).toFixed(4)),
-    y: parseFloat((startPt.y + (dyStart / lenXYStart) * approachOffsetMm).toFixed(4)),
-    z: parseFloat((startPt.z + zLiftMm).toFixed(4)), 
-    type: 'approach',
-    name: 'p_approach'
-  };
+    // 4. Target_20_5 – Weld End (at endPoint)
+    {
+      name:   'Target_20_5',
+      pos:    [endPoint.x, endPoint.y, endPoint.z],
+      orient: weldOrient,
+      conf:   [0, -1, 0, 0],
+      type:   'weld_end',
+    },
 
-  plannedWaypoints.push(approachPt);
-
-  // 2. Main Weld Waypoints 
-  path.forEach((pt, idx) => {
-    plannedWaypoints.push({
-      x: pt.x,
-      y: pt.y,
-      z: pt.z,
-      type: 'weld',
-      name: `Target_${(idx + 1) * 10}`
-    });
-  });
-
-  // 3. Generate Retract Waypoint 
-  const endPt = path[path.length - 1];
-
-  const retractPt = {
-    x: endPt.x, // Giữ nguyên vị trí XY điểm cuối
-    y: endPt.y,
-    z: parseFloat((endPt.z + zLiftMm).toFixed(4)), 
-    type: 'retract',
-    name: 'p_retract'
-  };
-
-  plannedWaypoints.push(retractPt);
-
-  return plannedWaypoints;
-}
-
-function interpolatePoints(points, stepSize) {
-  const result = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const dist = Math.sqrt(
-      Math.pow(p2.x - p1.x, 2) +
-      Math.pow(p2.y - p1.y, 2) +
-      Math.pow(p2.z - p1.z, 2)
-    );
-
-    result.push(p1);
-    if (dist > stepSize) {
-      const steps = Math.floor(dist / stepSize);
-      for (let s = 1; s < steps; s++) {
-        const t = s / steps;
-        result.push({
-          x: parseFloat((p1.x + t * (p2.x - p1.x)).toFixed(4)),
-          y: parseFloat((p1.y + t * (p2.y - p1.y)).toFixed(4)),
-          z: parseFloat((p1.z + t * (p2.z - p1.z)).toFixed(4)),
-        });
-      }
-    }
-  }
-  if (points.length > 0) {
-    result.push(points[points.length - 1]);
-  }
-  return result;
+    // 5. Target_20 – Retract Point (offset from endPoint: Y+11, Z+31.936)
+    {
+      name:   'Target_20',
+      pos:    [endPoint.x, endPoint.y + 11, endPoint.z + 31.936],
+      orient: weldOrient,
+      conf:   [-1, 0, -1, 0],
+      type:   'retract',
+    },
+  ];
 }
 
 module.exports = {
-  planTrajectory,
-  interpolatePoints
+  planWaypoints,
 };

@@ -126,16 +126,16 @@ export default function AcquirePage() {
           const pipeline = pipelineRes.data.pipeline;
           resultPayload = {
             source: pipeline.sourceFile || (acquisitionMethod === "watched-folder" ? "Watched Folder" : "Manual Import"),
-            totalPoints: pipeline.totalPoints,
-            pathPoints: pipeline.robotTargets,
+            totalPoints: pipeline.totalWaypoints,
+            waypoints: pipeline.waypoints,
             timestamp: new Date().toISOString(),
           };
 
           setCanonicalPath({
             id: `canonical_${Date.now()}`,
             source: pipeline.sourceFile || selectedFiles[0]?.name || "Feature.txt",
-            pathPoints: pipeline.robotTargets,
-            totalPoints: pipeline.totalPoints,
+            waypoints: pipeline.waypoints,
+            totalWaypoints: pipeline.totalWaypoints,
           });
         }
       }
