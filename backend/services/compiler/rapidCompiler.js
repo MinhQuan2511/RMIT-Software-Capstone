@@ -8,6 +8,9 @@
  *     PROC main()  →  calls Path_10
  *     PROC Path_10()  →  MoveL sequence with tWeldGun\WObj:=wobj0
  *   ENDMODULE
+ *
+ * Speed and zone values are read from each waypoint's `speed` and `zone`
+ * fields so the compiler adapts automatically to upstream path-planner output.
  */
 
 /**
@@ -40,6 +43,8 @@ function buildRobtarget(name, pos, orient, conf) {
 
 /**
  * Generates a complete ABB RAPID module from an array of waypoints.
+ * Each waypoint may carry `speed` and `zone` fields; defaults are applied
+ * when those fields are absent for backwards compatibility.
  *
  * @param {import('../kinematics/pathPlanner').RobotWaypoint[]} waypoints
  * @returns {string} RAPID module source code
@@ -74,22 +79,13 @@ function generateRapidCode(waypoints) {
     }
   }
 
-  // --- Module comment block ---
-  lines.push('');
-  lines.push('    !***********************************************************');
-  lines.push('    ! Module: Module1');
-  lines.push('    ! Description: Auto-generated from VertexDynamics Pipeline');
-  lines.push('    ! Author: hieun');
-  lines.push('    ! Version: 1.0');
-  lines.push('    !***********************************************************');
-
   // --- PROC main() ---
   lines.push('');
   lines.push('    PROC main()');
   lines.push('        Path_10;');
   lines.push('    ENDPROC');
 
-  // --- PROC Path_10() ---
+  // --- PROC Path_10() (verified RAPID template) ---
   lines.push('');
   lines.push('    PROC Path_10()');
   lines.push('        ConfJ \\Off;');

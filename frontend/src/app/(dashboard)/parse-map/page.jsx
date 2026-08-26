@@ -17,6 +17,24 @@ const PIPELINE_STEPS = [
   { label: "Compile to Verified RAPID Module (Path_10 Structure)", icon: "terminal" },
 ];
 
+// Color palette for each waypoint type
+const WP_COLORS = {
+  home: { fill: "#10b981", stroke: "#059669", label: "HOME" },
+  approach: { fill: "#3b82f6", stroke: "#2563eb", label: "APPROACH" },
+  weld_start: { fill: "#22c55e", stroke: "#16a34a", label: "WELD START" },
+  weld_end: { fill: "#ef4444", stroke: "#dc2626", label: "WELD END" },
+  retract: { fill: "#a855f7", stroke: "#7c3aed", label: "RETRACT" },
+};
+
+// Per-waypoint label placement config to avoid overlapping
+const LABEL_PLACEMENT = {
+  home: { dx: 0, dy: -22, anchor: "middle" },
+  approach: { dx: -40, dy: -14, anchor: "end" },
+  weld_start: { dx: 0, dy: 20, anchor: "middle" },
+  weld_end: { dx: 0, dy: 20, anchor: "middle" },
+  retract: { dx: 40, dy: -14, anchor: "start" },
+};
+
 export default function ParseMapPage() {
   const router = useRouter();
   const { showToast } = useToast();
@@ -33,6 +51,7 @@ export default function ParseMapPage() {
   const [processing, setProcessing] = useState(false);
   const [mappingComplete, setMappingComplete] = useState(false);
   const [pipelineData, setPipelineData] = useState(null);
+  const [svgAnimPhase, setSvgAnimPhase] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +60,8 @@ export default function ParseMapPage() {
         const res = await axiosClient.post("/process-pipeline");
         if (!cancelled && res.data && res.data.success) {
           setPipelineData(res.data.pipeline);
+          setTimeout(() => { if (!cancelled) setSvgAnimPhase(1); }, 200);
+          setTimeout(() => { if (!cancelled) setSvgAnimPhase(2); }, 1800);
         }
       } catch (e) {
         console.warn("Failed fetching pipeline data from backend API:", e.message);
@@ -67,12 +88,10 @@ export default function ParseMapPage() {
     };
     runAnimation();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Build active waypoints from the pipeline response (new waypoint format: {name, pos, orient, conf, type})
+  // Build active waypoints from the pipeline response
   const activeTargets = useMemo(() => {
     if (pipelineData?.waypoints && pipelineData.waypoints.length > 0) {
       return pipelineData.waypoints;
@@ -80,25 +99,22 @@ export default function ParseMapPage() {
     if (canonicalWeldPath?.waypoints && canonicalWeldPath.waypoints.length > 0) {
       return canonicalWeldPath.waypoints;
     }
-    // Fallback defaults matching the verified RAPID template
     return [
-      { name: "home", pos: [1178.89, 0, 809.42], type: "home" },
-      { name: "Target_40", pos: [414.69, 1112.75, 320.34], type: "weld_start" },
-      { name: "Target_30", pos: [414.69, 1122.75, 343.37], type: "approach" },
-      { name: "Target_20_5", pos: [338.53, 1333.74, 322.07], type: "weld_end" },
-      { name: "Target_20", pos: [338.53, 1344.74, 354.01], type: "retract" },
+      { id: "home", name: "home", pos: [226.61, 1023.25, 722.07], type: "home", speed: "v100", zone: "z100" },
+      { id: "Target_30", name: "Target_30", pos: [427.75, 1074.86, 350.34], type: "approach", speed: "v80", zone: "fine" },
+      { id: "Target_40", name: "Target_40", pos: [414.69, 1112.75, 320.34], type: "weld_start", speed: "v100", zone: "fine" },
+      { id: "Target_20_5", name: "Target_20_5", pos: [338.53, 1333.74, 322.07], type: "weld_end", speed: "v100", zone: "fine" },
+      { id: "Target_20", name: "Target_20", pos: [338.53, 1333.74, 362.07], type: "retract", speed: "v100", zone: "fine" },
     ];
   }, [pipelineData, canonicalWeldPath]);
 
-  // Extract seam data from pipeline or defaults
   const seam = pipelineData?.seam || null;
 
-  // Helper to get x, y, z from either new pos[] format or legacy {x, y, z}
   const getX = (wp) => wp.pos ? wp.pos[0] : (wp.x ?? 0);
   const getY = (wp) => wp.pos ? wp.pos[1] : (wp.y ?? 0);
   const getZ = (wp) => wp.pos ? wp.pos[2] : (wp.z ?? 0);
 
-  const weldStartWP = activeTargets.find((wp) => wp.type === "weld_start") || activeTargets[1];
+  const weldStartWP = activeTargets.find((wp) => wp.type === "weld_start") || activeTargets[2];
   const weldEndWP = activeTargets.find((wp) => wp.type === "weld_end") || activeTargets[3];
 
   const weldStartDisplay = seam
@@ -131,7 +147,6 @@ export default function ParseMapPage() {
           status: "Direct Robot Base Workspace Trajectory (Calibrated by TracerStudio)",
         });
       }
-
       setMappingComplete(true);
       updateProgress({ parseComplete: true });
       showToast(
@@ -147,37 +162,91 @@ export default function ParseMapPage() {
     }
   };
 
-  // SVG projection helpers
-  const project3DTo2D = (pt, minX, maxX, minY, maxY) => {
-    const rangeX = maxX - minX || 1;
-    const rangeY = maxY - minY || 1;
-    const normX = (getX(pt) - minX) / rangeX;
-    const normY = (getY(pt) - minY) / rangeY;
-    const canvasX = 60 + normX * 430;
-    const canvasY = 170 - normY * 110;
-    return { x: canvasX, y: canvasY };
-  };
+  // ─── Isometric 2.5D Projection ────────────────────────────────────────
+  // Combines X, Y (horizontal spread) with Z (vertical height) so elevation
+  // differences between e.g. Target_20 and Target_20_5 are clearly visible.
+  const SVG_W = 580;
+  const SVG_H = 340;
+  const PAD = 65;
 
   const bounds = useMemo(() => {
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
+    let minPx = Infinity, maxPx = -Infinity;
+    let minPy = Infinity, maxPy = -Infinity;
     activeTargets.forEach((p) => {
-      const px = getX(p), py = getY(p);
-      if (px < minX) minX = px;
-      if (px > maxX) maxX = px;
-      if (py < minY) minY = py;
-      if (py > maxY) maxY = py;
+      // Isometric: project x,y onto a single horizontal axis, use z for vertical
+      const ix = getX(p) * 0.7 + getY(p) * 0.7;
+      const iy = getZ(p) - getY(p) * 0.25;
+      if (ix < minPx) minPx = ix;
+      if (ix > maxPx) maxPx = ix;
+      if (iy < minPy) minPy = iy;
+      if (iy > maxPy) maxPy = iy;
     });
-    return { minX, maxX, minY, maxY };
+    const padX = (maxPx - minPx) * 0.12 || 50;
+    const padY = (maxPy - minPy) * 0.15 || 50;
+    return { minX: minPx - padX, maxX: maxPx + padX, minY: minPy - padY, maxY: maxPy + padY };
   }, [activeTargets]);
 
+  const project = (wp) => {
+    const rangeX = bounds.maxX - bounds.minX || 1;
+    const rangeY = bounds.maxY - bounds.minY || 1;
+    const ix = getX(wp) * 0.7 + getY(wp) * 0.7;
+    const iy = getZ(wp) - getY(wp) * 0.25;
+    const normX = (ix - bounds.minX) / rangeX;
+    const normY = (iy - bounds.minY) / rangeY;
+    return {
+      x: PAD + normX * (SVG_W - PAD * 2),
+      y: (SVG_H - PAD) - normY * (SVG_H - PAD * 2),
+    };
+  };
+
   const projectedPoints = useMemo(() => {
-    return activeTargets.map((pt) => project3DTo2D(pt, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY));
+    return activeTargets.map((pt) => ({
+      ...project(pt),
+      type: pt.type || "unknown",
+      name: pt.name || pt.id || "?",
+      speed: pt.speed || "v100",
+      zone: pt.zone || "fine",
+    }));
   }, [activeTargets, bounds]);
 
-  const svgPolylinePoints = useMemo(() => {
-    return projectedPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  // Build segment data for color-coded lines
+  const segments = useMemo(() => {
+    if (projectedPoints.length < 2) return [];
+    const segs = [];
+    for (let i = 0; i < projectedPoints.length - 1; i++) {
+      const from = projectedPoints[i];
+      const to = projectedPoints[i + 1];
+      let color = "#64748b";
+      let dash = "6,4";
+      let width = 1.5;
+      let glow = false;
+
+      if (from.type === "weld_start" && to.type === "weld_end") {
+        color = "#22d3ee";
+        width = 4;
+        dash = "";
+        glow = true;
+      } else if (from.type === "approach" && to.type === "weld_start") {
+        color = "#3b82f6";
+        width = 2;
+        dash = "5,3";
+      } else if (from.type === "weld_end" && to.type === "retract") {
+        color = "#a855f7";
+        width = 2;
+        dash = "5,3";
+      } else {
+        color = "#475569";
+        dash = "6,4";
+        width = 1.5;
+      }
+      segs.push({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, color, dash, width, glow });
+    }
+    return segs;
   }, [projectedPoints]);
+
+  const seamWidthVal = seam?.seamWidth || 5;
+  const weldStartPt = projectedPoints.find((p) => p.type === "weld_start");
+  const weldEndPt = projectedPoints.find((p) => p.type === "weld_end");
 
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full relative">
@@ -193,7 +262,6 @@ export default function ParseMapPage() {
         </div>
 
         <StepperProgress />
-
         <div className="h-px w-full bg-outline-variant/60 my-1 opacity-50"></div>
 
         <div className="flex-1 flex flex-col gap-5 pb-6">
@@ -219,15 +287,11 @@ export default function ParseMapPage() {
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD START (Target_40)</span>
-                <span className="block font-mono font-bold text-emerald-600 mt-0.5">
-                  {weldStartDisplay}
-                </span>
+                <span className="block font-mono font-bold text-emerald-600 mt-0.5">{weldStartDisplay}</span>
               </div>
               <div className="p-2.5 rounded-lg border border-surface-container bg-surface-container-lowest">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">WELD END (Target_20_5)</span>
-                <span className="block font-mono font-bold text-red-600 mt-0.5">
-                  {weldEndDisplay}
-                </span>
+                <span className="block font-mono font-bold text-red-600 mt-0.5">{weldEndDisplay}</span>
               </div>
             </div>
           </div>
@@ -302,7 +366,7 @@ export default function ParseMapPage() {
         </div>
       </div>
 
-      {/* Right Viewport */}
+      {/* Right Viewport — Isometric 2.5D Trajectory Visualizer */}
       <Active3DViewport
         title={`Workspace Toolpath Trajectory (Direct Feature Stream)`}
         showSolidControls
@@ -311,75 +375,205 @@ export default function ParseMapPage() {
           <div className="absolute inset-0 bg-3d-viewport"></div>
           <div className="absolute inset-0 viewport-grid"></div>
 
-          <div className="relative z-10 w-full max-w-[750px] px-6">
-            <div className="bg-surface/90 border border-outline-variant/40 rounded-xl p-5 mb-4 shadow-lg backdrop-blur-md">
+          <div className="relative z-10 w-full max-w-[800px] px-6 flex flex-col gap-4">
+            {/* SVG Trajectory Visualization */}
+            <div className="bg-surface/90 border border-outline-variant/40 rounded-xl p-5 shadow-lg backdrop-blur-md">
               <div className="flex items-center justify-between mb-3 border-b border-outline-variant/30 pb-2">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary text-[18px]">3d_rotation</span>
                   <span className="text-xs font-bold text-on-surface font-mono">
-                    Workspace Toolpath Trajectory (Direct Feature Stream)
+                    Isometric Toolpath Projection (2.5D)
                   </span>
                 </div>
                 <span className="text-[10px] font-mono text-green-600 bg-green-500/10 px-2 py-0.5 rounded font-bold">
-                  {totalWaypoints} Points Generated
+                  {totalWaypoints} Points
                 </span>
               </div>
 
-              <svg viewBox="0 0 550 220" className="w-full h-56 bg-surface-container-lowest/50 rounded-lg border border-outline-variant/20">
-                {[40, 80, 120, 160, 200].map((y, i) => (
-                  <line key={i} x1="30" y1={y} x2="520" y2={y} stroke="#94a3b8" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.3" />
+              <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full bg-surface-container-lowest/50 rounded-lg border border-outline-variant/20" style={{ height: "300px" }}>
+                <defs>
+                  {/* Cyan glow filter for weld seam */}
+                  <filter id="cyanGlow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                  <marker id="arrowGrey" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
+                    <polygon points="0 0, 7 2.5, 0 5" fill="#64748b" />
+                  </marker>
+                  <marker id="arrowBlue" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
+                    <polygon points="0 0, 7 2.5, 0 5" fill="#3b82f6" />
+                  </marker>
+                  <marker id="arrowCyan" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
+                    <polygon points="0 0, 7 2.5, 0 5" fill="#22d3ee" />
+                  </marker>
+                  <marker id="arrowPurple" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
+                    <polygon points="0 0, 7 2.5, 0 5" fill="#a855f7" />
+                  </marker>
+                </defs>
+
+                {/* Subtle background grid */}
+                {[0.2, 0.4, 0.6, 0.8].map((frac, i) => (
+                  <React.Fragment key={`grid-${i}`}>
+                    <line x1={PAD} y1={PAD + frac * (SVG_H - PAD * 2)} x2={SVG_W - PAD} y2={PAD + frac * (SVG_H - PAD * 2)} stroke="#334155" strokeWidth="0.4" strokeDasharray="2,4" opacity="0.3" />
+                    <line x1={PAD + frac * (SVG_W - PAD * 2)} y1={PAD} x2={PAD + frac * (SVG_W - PAD * 2)} y2={SVG_H - PAD} stroke="#334155" strokeWidth="0.4" strokeDasharray="2,4" opacity="0.3" />
+                  </React.Fragment>
                 ))}
 
-                <polyline
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth="3"
-                  points={svgPolylinePoints}
-                />
+                {/* Seam width translucent band */}
+                {weldStartPt && weldEndPt && (
+                  <line
+                    x1={weldStartPt.x} y1={weldStartPt.y}
+                    x2={weldEndPt.x} y2={weldEndPt.y}
+                    stroke="#22d3ee" strokeWidth={Math.max(10, seamWidthVal * 2)}
+                    strokeLinecap="round" opacity="0.08"
+                  />
+                )}
 
-                {projectedPoints.map((pt, i) => (
-                  <g key={i}>
-                    <circle
-                      cx={pt.x}
-                      cy={pt.y}
-                      r={i === 0 || i === projectedPoints.length - 1 ? "6" : "3.5"}
-                      fill={i === 0 ? "#10b981" : i === projectedPoints.length - 1 ? "#ef4444" : "#3b82f6"}
-                      stroke="#ffffff"
-                      strokeWidth="1.5"
+                {/* Path segments with arrows */}
+                {segments.map((seg, i) => {
+                  let marker = "url(#arrowGrey)";
+                  if (seg.color === "#3b82f6") marker = "url(#arrowBlue)";
+                  else if (seg.color === "#22d3ee") marker = "url(#arrowCyan)";
+                  else if (seg.color === "#a855f7") marker = "url(#arrowPurple)";
+
+                  return (
+                    <line
+                      key={`seg-${i}`}
+                      x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2}
+                      stroke={seg.color}
+                      strokeWidth={seg.width}
+                      strokeDasharray={seg.dash || "none"}
+                      strokeLinecap="round"
+                      markerEnd={marker}
+                      filter={seg.glow ? "url(#cyanGlow)" : undefined}
+                      opacity={svgAnimPhase >= 1 ? 1 : 0}
+                      style={{ transition: `opacity 0.5s ease ${i * 0.25}s` }}
                     />
-                  </g>
-                ))}
+                  );
+                })}
 
-                {projectedPoints[0] && (
-                  <g transform={`translate(${projectedPoints[0].x}, ${projectedPoints[0].y})`}>
-                    <line x1="0" y1="0" x2="0" y2="-22" stroke="#10b981" strokeWidth="1.5" strokeDasharray="2,2" />
-                    <rect x="-24" y="-36" width="48" height="16" rx="4" fill="#10b981" />
-                    <text x="0" y="-25" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
-                      HOME
-                    </text>
-                  </g>
-                )}
+                {/* Waypoint markers with positioned labels */}
+                {projectedPoints.map((pt, i) => {
+                  const colors = WP_COLORS[pt.type] || { fill: "#64748b", stroke: "#475569", label: pt.name };
+                  const placement = LABEL_PLACEMENT[pt.type] || { dx: 0, dy: -18, anchor: "middle" };
+                  const isKey = pt.type === "home" || pt.type === "weld_start" || pt.type === "weld_end";
+                  const r = isKey ? 6 : 4;
 
-                {projectedPoints[projectedPoints.length - 1] && (
-                  <g transform={`translate(${projectedPoints[projectedPoints.length - 1].x}, ${projectedPoints[projectedPoints.length - 1].y})`}>
-                    <line x1="0" y1="0" x2="0" y2="22" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="2,2" />
-                    <rect x="-28" y="24" width="56" height="16" rx="4" fill="#ef4444" />
-                    <text x="0" y="35" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
-                      RETRACT
-                    </text>
-                  </g>
-                )}
+                  return (
+                    <g
+                      key={`wp-${i}`}
+                      opacity={svgAnimPhase >= 1 ? 1 : 0}
+                      style={{ transition: `opacity 0.4s ease ${0.4 + i * 0.18}s` }}
+                    >
+                      {/* Pulse ring on key waypoints */}
+                      {isKey && (
+                        <circle cx={pt.x} cy={pt.y} r={r + 4} fill="none" stroke={colors.fill} strokeWidth="1" opacity="0.3">
+                          <animate attributeName="r" from={r + 2} to={r + 10} dur="2.5s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" from="0.4" to="0" dur="2.5s" repeatCount="indefinite" />
+                        </circle>
+                      )}
 
-                <g transform="translate(45, 195)">
-                  <line x1="0" y1="0" x2="20" y2="0" stroke="#ef4444" strokeWidth="2" />
-                  <line x1="0" y1="0" x2="0" y2="-20" stroke="#3b82f6" strokeWidth="2" />
-                  <text x="24" y="4" fill="#ef4444" fontSize="9" fontFamily="monospace" fontWeight="bold">X_robot</text>
-                  <text x="-4" y="-24" fill="#3b82f6" fontSize="9" fontFamily="monospace" fontWeight="bold">Z_robot</text>
+                      {/* Dot */}
+                      <circle cx={pt.x} cy={pt.y} r={r} fill={colors.fill} stroke="#ffffff" strokeWidth="1.5" />
+
+                      {/* Leader line to label */}
+                      <line
+                        x1={pt.x} y1={pt.y}
+                        x2={pt.x + placement.dx * 0.5} y2={pt.y + (placement.dy > 0 ? 8 : -8)}
+                        stroke={colors.fill} strokeWidth="0.8" strokeDasharray="1,1" opacity="0.4"
+                      />
+
+                      {/* Label badge */}
+                      <rect
+                        x={pt.x + placement.dx - (placement.anchor === "end" ? 56 : placement.anchor === "start" ? 0 : 30)}
+                        y={pt.y + placement.dy - 8}
+                        width="60" height="15" rx="3"
+                        fill={colors.fill} opacity="0.92"
+                      />
+                      <text
+                        x={pt.x + placement.dx - (placement.anchor === "end" ? 26 : placement.anchor === "start" ? 30 : 0)}
+                        y={pt.y + placement.dy + 3}
+                        textAnchor="middle"
+                        fill="#ffffff" fontSize="7.5" fontFamily="monospace" fontWeight="bold"
+                      >
+                        {pt.name}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Axis indicator — top-left corner, clear of legend */}
+                <g transform={`translate(${PAD - 10}, ${SVG_H - PAD + 10})`}>
+                  <line x1="0" y1="0" x2="22" y2="0" stroke="#ef4444" strokeWidth="1.5" />
+                  <line x1="0" y1="0" x2="0" y2="-22" stroke="#22d3ee" strokeWidth="1.5" />
+                  <line x1="0" y1="0" x2="12" y2="-10" stroke="#a3e635" strokeWidth="1.5" />
+                  <text x="26" y="3" fill="#ef4444" fontSize="8" fontFamily="monospace" fontWeight="bold">X</text>
+                  <text x="-2" y="-26" fill="#22d3ee" fontSize="8" fontFamily="monospace" fontWeight="bold">Z</text>
+                  <text x="14" y="-12" fill="#a3e635" fontSize="8" fontFamily="monospace" fontWeight="bold">Y</text>
+                </g>
+
+                {/* Legend — top-right, well-separated from axes */}
+                <g transform={`translate(${SVG_W - 145}, ${PAD - 5})`}>
+                  <rect x="-6" y="-6" width="138" height="58" rx="4" fill="#0f172a" opacity="0.6" />
+                  <line x1="2" y1="4" x2="18" y2="4" stroke="#475569" strokeWidth="1.5" strokeDasharray="4,3" />
+                  <text x="24" y="7" fill="#94a3b8" fontSize="7" fontFamily="monospace">Air Motion</text>
+                  <line x1="2" y1="16" x2="18" y2="16" stroke="#3b82f6" strokeWidth="2" strokeDasharray="5,3" />
+                  <text x="24" y="19" fill="#94a3b8" fontSize="7" fontFamily="monospace">Approach / Retract</text>
+                  <line x1="2" y1="28" x2="18" y2="28" stroke="#22d3ee" strokeWidth="3" filter="url(#cyanGlow)" />
+                  <text x="24" y="31" fill="#94a3b8" fontSize="7" fontFamily="monospace">Active Weld Seam</text>
+                  <circle cx="10" cy="42" r="3" fill="#22c55e" stroke="#fff" strokeWidth="1" />
+                  <text x="24" y="45" fill="#94a3b8" fontSize="7" fontFamily="monospace">Start / End Markers</text>
                 </g>
               </svg>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 mb-4">
+            {/* Coordinate Readout Table */}
+            <div className="bg-surface/90 border border-outline-variant/40 rounded-xl p-4 shadow-lg backdrop-blur-md">
+              <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[14px] text-primary">table_chart</span>
+                Waypoint Coordinate Readout
+              </h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[10px] font-mono">
+                  <thead>
+                    <tr className="border-b border-outline-variant/30">
+                      <th className="text-left py-1.5 pr-3 text-on-surface-variant font-bold uppercase tracking-wider">#</th>
+                      <th className="text-left py-1.5 pr-3 text-on-surface-variant font-bold uppercase tracking-wider">Name</th>
+                      <th className="text-left py-1.5 pr-3 text-on-surface-variant font-bold uppercase tracking-wider">X</th>
+                      <th className="text-left py-1.5 pr-3 text-on-surface-variant font-bold uppercase tracking-wider">Y</th>
+                      <th className="text-left py-1.5 pr-3 text-on-surface-variant font-bold uppercase tracking-wider">Z</th>
+                      <th className="text-left py-1.5 pr-3 text-on-surface-variant font-bold uppercase tracking-wider">Speed</th>
+                      <th className="text-left py-1.5 text-on-surface-variant font-bold uppercase tracking-wider">Zone</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeTargets.map((wp, i) => {
+                      const colors = WP_COLORS[wp.type] || { fill: "#64748b" };
+                      return (
+                        <tr key={i} className="border-b border-outline-variant/15 hover:bg-surface-container-lowest/60 transition-colors">
+                          <td className="py-1.5 pr-3">
+                            <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: colors.fill }}></span>
+                            {i + 1}
+                          </td>
+                          <td className="py-1.5 pr-3 font-bold text-on-surface">{wp.name || wp.id}</td>
+                          <td className="py-1.5 pr-3 text-on-surface">{getX(wp).toFixed(3)}</td>
+                          <td className="py-1.5 pr-3 text-on-surface">{getY(wp).toFixed(3)}</td>
+                          <td className="py-1.5 pr-3 text-on-surface">{getZ(wp).toFixed(3)}</td>
+                          <td className="py-1.5 pr-3 text-blue-500 font-bold">{wp.speed || "v100"}</td>
+                          <td className="py-1.5 text-amber-500 font-bold">{wp.zone || "fine"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Info Stat Cards */}
+            <div className="grid grid-cols-3 gap-3">
               <div className="bg-surface/90 border border-outline-variant/30 rounded-lg p-3">
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Source File</span>
                 <span className="block text-xs font-mono font-bold text-primary mt-1">{sourceFile}</span>
