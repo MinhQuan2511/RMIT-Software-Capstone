@@ -111,11 +111,13 @@ The system synthesizes 5 deterministic waypoints ensuring zero-collision clearan
 
 | Waypoint Identifier | Operational Role | Mathematical Formulation | Speed & Zone |
 | :--- | :--- | :--- | :--- |
-| **`Target_40`** | **Weld Start** | $\mathbf{P}_{start} = [x_1, \; y_1, \; z_1]^T$ | `v100`, `fine` |
-| **`Target_20_5`** | **Weld End** | $\mathbf{P}_{end} = [x_2, \; y_2, \; z_2]^T$ | `v100`, `fine` |
-| **`Target_30`** | **Approach** | $\mathbf{P}_{approach} = \begin{bmatrix} x_1 - 25 u_x + 35 w_x \\ y_1 - 25 u_y + 35 w_y \\ z_1 + 45 \end{bmatrix}$ | `v80`, `fine` |
-| **`Target_20`** | **Retract** | $\mathbf{P}_{retract} = \begin{bmatrix} x_2 + 20 u_x + 35 w_x \\ y_2 + 20 u_y + 35 w_y \\ z_2 + 45 \end{bmatrix}$ | `v100`, `fine` |
-| **`home`** | **Standby** | $\mathbf{P}_{home} = \begin{bmatrix} \frac{x_1 + x_2}{2} + 60 w_x \\ \frac{y_1 + y_2}{2} + 60 w_y \\ \max(z_1, z_2) + 350 \end{bmatrix}$ | `v100`, `z100` |
+| **`Target_40`** | **Weld Start** | $[x_1, \; y_1, \; z_1]$ | `v100`, `fine` |
+| **`Target_20_5`** | **Weld End** | $[x_2, \; y_2, \; z_2]$ | `v100`, `fine` |
+| **`Target_30`** | **Approach** | $[x_1 - 25 u_x + 35 w_x, \; y_1 - 25 u_y + 35 w_y, \; z_1 + 45]$ | `v80`, `fine` |
+| **`Target_20`** | **Retract** | $[x_2 + 20 u_x + 35 w_x, \; y_2 + 20 u_y + 35 w_y, \; z_2 + 45]$ | `v100`, `fine` |
+| **`home`** | **Standby** | $[\frac{x_1 + x_2}{2} + 60 w_x, \; \frac{y_1 + y_2}{2} + 60 w_y, \; \max(z_1, z_2) + 350]$ | `v100`, `z100` |
+
+$$\mathbf{P}_{approach} = \begin{bmatrix} x_1 - 25 u_x + 35 w_x \\ y_1 - 25 u_y + 35 w_y \\ z_1 + 45 \end{bmatrix}, \quad \mathbf{P}_{retract} = \begin{bmatrix} x_2 + 20 u_x + 35 w_x \\ y_2 + 20 u_y + 35 w_y \\ z_2 + 45 \end{bmatrix}, \quad \mathbf{P}_{home} = \begin{bmatrix} \frac{x_1 + x_2}{2} + 60 w_x \\ \frac{y_1 + y_2}{2} + 60 w_y \\ \max(z_1, z_2) + 350 \end{bmatrix}$$
 
 ---
 
