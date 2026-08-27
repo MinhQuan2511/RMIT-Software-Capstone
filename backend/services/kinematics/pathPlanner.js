@@ -70,6 +70,18 @@ function planWaypoints(seam) {
   const uy = vy / safeL;
   const uz = vz / safeL;
 
+  // 2. Lateral Normal Vector in XY plane (perpendicular to seam, pointing outward into open space)
+  let wx = -uy;
+  let wy = ux;
+  const wLen = Math.sqrt(wx * wx + wy * wy);
+  if (wLen > 0.001) {
+    wx /= wLen;
+    wy /= wLen;
+  } else {
+    wx = 0;
+    wy = 1;
+  }
+
   // 1. Target_40 (Weld Start): Exactly P_start = [x1, y1, z1]
   const WELD_START = [
     parseFloat(x1.toFixed(4)),
@@ -84,24 +96,24 @@ function planWaypoints(seam) {
     parseFloat(z2.toFixed(4)),
   ];
 
-  // 3. Target_30 (Approach): Lift +50mm in Z, back off -30mm along seam direction
+  // 3. Target_30 (Approach: -25mm back, +45mm up, +35mm diagonal escape)
   const APPROACH = [
-    parseFloat((x1 - 30 * ux).toFixed(4)),
-    parseFloat((y1 - 30 * uy).toFixed(4)),
-    parseFloat((z1 + 50).toFixed(4)),
+    parseFloat((x1 - 25 * ux + 35 * wx).toFixed(4)),
+    parseFloat((y1 - 25 * uy + 35 * wy).toFixed(4)),
+    parseFloat((z1 + 45).toFixed(4)),
   ];
 
-  // 4. Target_20 (Retract): Lift +50mm straight up in Z from weld end
+  // 4. Target_20 (Retract: +20mm forward, +45mm up, +35mm diagonal escape)
   const RETRACT = [
-    parseFloat(x2.toFixed(4)),
-    parseFloat(y2.toFixed(4)),
-    parseFloat((z2 + 50).toFixed(4)),
+    parseFloat((x2 + 20 * ux + 35 * wx).toFixed(4)),
+    parseFloat((y2 + 20 * uy + 35 * wy).toFixed(4)),
+    parseFloat((z2 + 45).toFixed(4)),
   ];
 
-  // 5. home (Safe Standby): Centered over seam, lifted +350mm
+  // 5. home (Safe Standby: +60mm forward, +350mm up)
   const HOME = [
-    parseFloat(((x1 + x2) / 2).toFixed(4)),
-    parseFloat(((y1 + y2) / 2).toFixed(4)),
+    parseFloat(((x1 + x2) / 2 + 60 * wx).toFixed(4)),
+    parseFloat(((y1 + y2) / 2 + 60 * wy).toFixed(4)),
     parseFloat((Math.max(z1, z2) + 350).toFixed(4)),
   ];
 
