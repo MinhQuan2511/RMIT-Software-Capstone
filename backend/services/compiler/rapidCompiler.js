@@ -2,11 +2,12 @@
  * ABB RAPID (.mod) Code Generator Service
  * Compiles robot waypoints into a verified RAPID module template.
  *
- * Output structure:
+ * Output structure matches the exact RobotStudio-verified template:
  *   MODULE Module1
  *     CONST robtarget declarations ...
+ *     !*** Module header comment block ***
  *     PROC main()  →  calls Path_10
- *     PROC Path_10()  →  MoveL sequence with tWeldGun\WObj:=wobj0
+ *     PROC Path_10()  →  ConfJ/ConfL Off, MoveL sequence with tWeldGun\WObj:=wobj0
  *   ENDMODULE
  *
  * Speed and zone values are read from each waypoint's `speed` and `zone`
@@ -19,8 +20,10 @@
  * for float-like numbers, and outputs integers cleanly.
  */
 function fmtNum(n) {
-  // Keep full precision — RAPID is fine with long decimals
-  return String(n);
+  // Round to 9 decimal places max — preserves quaternion precision while
+  // trimming IEEE-754 floating point artifacts from computed coordinates
+  const rounded = Math.round(n * 1e9) / 1e9;
+  return String(rounded);
 }
 
 /**
@@ -45,6 +48,8 @@ function buildRobtarget(name, pos, orient, conf) {
  * Generates a complete ABB RAPID module from an array of waypoints.
  * Each waypoint may carry `speed` and `zone` fields; defaults are applied
  * when those fields are absent for backwards compatibility.
+ *
+ * Output matches the verified RobotStudio execution template exactly.
  *
  * @param {import('../kinematics/pathPlanner').RobotWaypoint[]} waypoints
  * @returns {string} RAPID module source code
@@ -78,6 +83,15 @@ function generateRapidCode(waypoints) {
       lines.push(buildRobtarget(wp.name, wp.pos, wp.orient, wp.conf));
     }
   }
+
+  // --- Module description comment block (verified template) ---
+  lines.push('');
+  lines.push('    !***********************************************************');
+  lines.push('    ! Module: Module1');
+  lines.push('    ! Description: Auto-generated from VertexDynamics Pipeline');
+  lines.push('    ! Author: hieun');
+  lines.push('    ! Version: 1.0');
+  lines.push('    !***********************************************************');
 
   // --- PROC main() ---
   lines.push('');

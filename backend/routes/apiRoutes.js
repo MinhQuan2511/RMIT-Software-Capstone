@@ -67,14 +67,42 @@ const handlePipeline = (req, res) => {
     if (!seam) {
       console.warn('Pipeline: No valid Feature.txt found, using fallback coordinates.');
       seam = {
-        startPoint: { x: 673.9846, y: 1349.3547, z: 1173.0933 },
-        endPoint:   { x: 552.5436, y: 1348.2062, z: 1372.8194 },
-        seamWidth:  5,
+        startPoint: { x: 414.69, y: 1112.75, z: 320.342 },
+        endPoint:   { x: 338.531, y: 1333.74, z: 322.068 },
+        seamWidth:  5.54,
       };
     }
 
     // --- Step 2: Plan waypoints (no matrix transform needed) ---
     const waypoints = planWaypoints(seam);
+
+    // Calculate physical feature metrics
+    const dx = seam.endPoint.x - seam.startPoint.x;
+    const dy = seam.endPoint.y - seam.startPoint.y;
+    const dz = seam.endPoint.z - seam.startPoint.z;
+    const seamLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const seamGapWidth = Math.abs(seam.seamWidth || 5.54);
+
+    const featureData = {
+      length: parseFloat(seamLength.toFixed(2)),
+      width: parseFloat(seamGapWidth.toFixed(2)),
+    };
+
+    // Format waypoints with clean numbers
+    const formattedWaypoints = waypoints.map((wp) => ({
+      id: wp.id || wp.name,
+      name: wp.name || wp.id,
+      type: wp.type,
+      pos: [
+        parseFloat(wp.pos[0].toFixed(4)),
+        parseFloat(wp.pos[1].toFixed(4)),
+        parseFloat(wp.pos[2].toFixed(4)),
+      ],
+      orient: wp.orient,
+      conf: wp.conf,
+      speed: wp.speed,
+      zone: wp.zone,
+    }));
 
     // --- Step 3: Generate RAPID code ---
     const rapidCode = generateRapidCode(waypoints);
@@ -82,11 +110,16 @@ const handlePipeline = (req, res) => {
 
     return res.json({
       success: true,
+      rapidCode,
+      featureData,
+      seam,
+      waypoints: formattedWaypoints,
       pipeline: {
         sourceFile: featurePath ? path.basename(featurePath) : 'Default_Fallback',
         seam,
-        totalWaypoints: waypoints.length,
-        waypoints,
+        featureData,
+        totalWaypoints: formattedWaypoints.length,
+        waypoints: formattedWaypoints,
         rapidCode,
       },
     });
@@ -97,20 +130,12 @@ const handlePipeline = (req, res) => {
 };
 router.post('/process-pipeline', handlePipeline);
 router.get('/process-pipeline', handlePipeline);
+router.get('/parse-map', handlePipeline);
+router.post('/parse-map', handlePipeline);
 
-// Get compiled RAPID code
-router.get('/rapid-code', (req, res) => {
-  try {
-    const rapidPath = path.join(uploadsDir, 'latest_rapid.mod');
-    if (fs.existsSync(rapidPath)) {
-      const rapidCode = fs.readFileSync(rapidPath, 'utf-8');
-      return res.json({ success: true, rapidCode });
-    }
-  } catch (err) {
-    console.error('Get RAPID code error:', err.message);
-  }
-  return handlePipeline(req, res);
-});
+// Get compiled RAPID code & waypoints unified payload
+router.get('/rapid-code', handlePipeline);
+router.post('/rapid-code', handlePipeline);
 
 // Launch RobotStudio
 router.post('/launch-robotstudio', (req, res) => {

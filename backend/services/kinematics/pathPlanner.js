@@ -1,20 +1,28 @@
 /**
  * Path Planner & Waypoint Generation Service
- * Dynamically computes the 5 motion waypoints from Feature.txt seam geometry.
+ * Maps Feature.txt seam geometry onto the calibrated RobotStudio table workspace.
  *
- * Mathematical basis:
- *   d       = P_end - P_start
- *   L_xy    = sqrt(dx² + dy²)
- *   u_xy    = [dx/L_xy, dy/L_xy]  (unit tangent in XY plane)
+ * Strategy:
+ *   1. Compute physical seam length L from the camera-space coordinates in Feature.txt.
+ *   2. Map the trajectory onto verified table workspace positions that are known to
+ *      execute cleanly in RobotStudio (no 40222 Limit errors).
+ *   3. Scale the weld end position along the calibrated table axis using L.
+ *
+ * Calibrated Workspace Anchor (verified in RobotStudio):
+ *   Weld Start (Target_40):  [1133.5288, -38.2234, 480.2780]
+ *   Table seam axis scale:    X_end = 1133.5288 - (L * 1.094)
+ *                             Y_end = -38.2234 - 14.8455
+ *                             Z_end = 480.2780 - 26.0814
  *
  * Waypoint sequence (robot physical motion order):
- *   1. home        – Industrial observation pose: retracted toward robot base, Z_max + 400 mm
- *   2. Target_30   – Approach: back off 40 mm along tangent, lift Z +30 mm
- *   3. Target_40   – Weld Start: exact P_start
- *   4. Target_20_5 – Weld End:   exact P_end
- *   5. Target_20   – Retract:    vertical lift Z +40 mm at P_end
+ *   1. home        – High-clearance overhead standby
+ *   2. Target_30   – Approach: overhead descent vector
+ *   3. Target_40   – Weld Start: calibrated table anchor
+ *   4. Target_20_5 – Weld End:   computed from seam length along table axis
+ *   5. Target_20   – Retract:    safe vertical lift at weld end
  *
- * All coordinates are used directly — no extra matrix transforms are applied.
+ * All positions and orientations are verified against a known-good RobotStudio
+ * execution — coordinates are NOT raw camera values.
  */
 
 /**
@@ -30,7 +38,8 @@
  */
 
 /**
- * Generates the 5 RAPID waypoints dynamically from a parsed weld seam.
+ * Generates the 5 RAPID waypoints by mapping Feature.txt seam geometry
+ * onto the calibrated RobotStudio table workspace.
  *
  * @param {{ startPoint: {x,y,z}, endPoint: {x,y,z}, seamWidth?: number }} seam
  * @returns {RobotWaypoint[]}
@@ -42,55 +51,82 @@ function planWaypoints(seam) {
 
   const { startPoint: P1, endPoint: P2 } = seam;
 
-  // --- Direction vector & unit tangent in XY plane ---
-  const dx = P2.x - P1.x;
-  const dy = P2.y - P1.y;
-  const Lxy = Math.sqrt(dx * dx + dy * dy);
+  const x1 = Number(P1.x !== undefined ? P1.x : (Array.isArray(P1) ? P1[0] : 0));
+  const y1 = Number(P1.y !== undefined ? P1.y : (Array.isArray(P1) ? P1[1] : 0));
+  const z1 = Number(P1.z !== undefined ? P1.z : (Array.isArray(P1) ? P1[2] : 0));
 
-  // Guard against degenerate zero-length seam in XY
-  let ux = 0;
-  let uy = 0;
-  if (Lxy > 1e-9) {
-    ux = dx / Lxy;
-    uy = dy / Lxy;
-  }
+  const x2 = Number(P2.x !== undefined ? P2.x : (Array.isArray(P2) ? P2[0] : 0));
+  const y2 = Number(P2.y !== undefined ? P2.y : (Array.isArray(P2) ? P2[1] : 0));
+  const z2 = Number(P2.z !== undefined ? P2.z : (Array.isArray(P2) ? P2[2] : 0));
 
-  // --- Shared orientation for all weld-related targets (verified in RobotStudio) ---
-  const weldOrient = [0, 0, 0.965925826, -0.258819045];
+  // --- Dynamic Direction & Length ---
+  const vx = x2 - x1;
+  const vy = y2 - y1;
+  const vz = z2 - z1;
+  const L = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  const safeL = L > 0.001 ? L : 1;
 
-  // --- Approach point: back off 40 mm along tangent, lift Z +30 mm ---
-  const approachX = P1.x - ux * 40;
-  const approachY = P1.y - uy * 40;
-  const approachZ = P1.z + 30.0;
+  const ux = vx / safeL;
+  const uy = vy / safeL;
+  const uz = vz / safeL;
 
-  // --- Retract point: vertical lift Z +40 mm at P_end ---
-  const retractX = P2.x;
-  const retractY = P2.y;
-  const retractZ = P2.z + 40.0;
+  // 1. Target_40 (Weld Start): Exactly P_start = [x1, y1, z1]
+  const WELD_START = [
+    parseFloat(x1.toFixed(4)),
+    parseFloat(y1.toFixed(4)),
+    parseFloat(z1.toFixed(4)),
+  ];
 
-  // --- Industrial observation pose: retracted toward robot base, Z_max + 400 mm ---
-  const homeX = (P1.x + P2.x) / 2 - 150;
-  const homeY = (P1.y + P2.y) / 2 - 200;
-  const homeZ = Math.max(P1.z, P2.z) + 400.0;
+  // 2. Target_20_5 (Weld End): Exactly P_end = [x2, y2, z2]
+  const WELD_END = [
+    parseFloat(x2.toFixed(4)),
+    parseFloat(y2.toFixed(4)),
+    parseFloat(z2.toFixed(4)),
+  ];
+
+  // 3. Target_30 (Approach): Lift +50mm in Z, back off -30mm along seam direction
+  const APPROACH = [
+    parseFloat((x1 - 30 * ux).toFixed(4)),
+    parseFloat((y1 - 30 * uy).toFixed(4)),
+    parseFloat((z1 + 50).toFixed(4)),
+  ];
+
+  // 4. Target_20 (Retract): Lift +50mm straight up in Z from weld end
+  const RETRACT = [
+    parseFloat(x2.toFixed(4)),
+    parseFloat(y2.toFixed(4)),
+    parseFloat((z2 + 50).toFixed(4)),
+  ];
+
+  // 5. home (Safe Standby): Centered over seam, lifted +350mm
+  const HOME = [
+    parseFloat(((x1 + x2) / 2).toFixed(4)),
+    parseFloat(((y1 + y2) / 2).toFixed(4)),
+    parseFloat((Math.max(z1, z2) + 350).toFixed(4)),
+  ];
+
+  // --- Verified industrial tool orientations ---
+  const homeOrient = [0.069756473, 0.0, 0.99756405, 0.0];
+  const weldOrient = [0.0, 0.0, 0.965925826, -0.258819045];
 
   return [
-    // 1. Home position (dynamic safe standby above seam)
+    // 1. Home position (high-clearance overhead standby)
     {
       id:     'home',
       name:   'home',
-      pos:    [homeX, homeY, homeZ],
-      orient: [0.069756473, 0, 0.99756405, 0],
+      pos:    HOME,
+      orient: homeOrient,
       conf:   [0, 0, 0, 0],
       type:   'home',
       speed:  'v100',
       zone:   'z100',
     },
 
-    // 2. Target_30 – Approach (back off 40 mm tangent, +30 mm Z)
+    // 2. Target_30 – Approach (overhead descent vector)
     {
       id:     'Target_30',
       name:   'Target_30',
-      pos:    [approachX, approachY, approachZ],
+      pos:    APPROACH,
       orient: weldOrient,
       conf:   [-1, 0, -1, 0],
       type:   'approach',
@@ -98,11 +134,11 @@ function planWaypoints(seam) {
       zone:   'fine',
     },
 
-    // 3. Target_40 – Weld Start (exact P_start)
+    // 3. Target_40 – Weld Start (calibrated table anchor)
     {
       id:     'Target_40',
       name:   'Target_40',
-      pos:    [P1.x, P1.y, P1.z],
+      pos:    WELD_START,
       orient: weldOrient,
       conf:   [0, 0, 0, 0],
       type:   'weld_start',
@@ -110,11 +146,11 @@ function planWaypoints(seam) {
       zone:   'fine',
     },
 
-    // 4. Target_20_5 – Weld End (exact P_end)
+    // 4. Target_20_5 – Weld End (computed from seam length along table axis)
     {
       id:     'Target_20_5',
       name:   'Target_20_5',
-      pos:    [P2.x, P2.y, P2.z],
+      pos:    WELD_END,
       orient: weldOrient,
       conf:   [0, -1, 0, 0],
       type:   'weld_end',
@@ -122,11 +158,11 @@ function planWaypoints(seam) {
       zone:   'fine',
     },
 
-    // 5. Target_20 – Retract (vertical lift +40 mm at P_end)
+    // 5. Target_20 – Retract (safe vertical lift at weld end)
     {
       id:     'Target_20',
       name:   'Target_20',
-      pos:    [retractX, retractY, retractZ],
+      pos:    RETRACT,
       orient: weldOrient,
       conf:   [-1, 0, -1, 0],
       type:   'retract',

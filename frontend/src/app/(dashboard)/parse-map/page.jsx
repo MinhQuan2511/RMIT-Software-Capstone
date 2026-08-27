@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
@@ -17,29 +17,33 @@ const PIPELINE_STEPS = [
   { label: "Compile to Verified RAPID Module (Path_10 Structure)", icon: "terminal" },
 ];
 
-// Color palette for each waypoint type
-const WP_COLORS = {
-  home: { fill: "#10b981", stroke: "#059669", label: "HOME" },
-  approach: { fill: "#3b82f6", stroke: "#2563eb", label: "APPROACH" },
-  weld_start: { fill: "#22c55e", stroke: "#16a34a", label: "WELD START" },
-  weld_end: { fill: "#ef4444", stroke: "#dc2626", label: "WELD END" },
-  retract: { fill: "#a855f7", stroke: "#7c3aed", label: "RETRACT" },
+// Color palette and descriptor for each waypoint type
+const WP_CONFIG = {
+  home: { fill: "#06b6d4", stroke: "#0891b2", badgeText: "home (Standby)", label: "HOME" },
+  approach: { fill: "#eab308", stroke: "#ca8a04", badgeText: "Target_30 (Approach)", label: "APPROACH" },
+  weld_start: { fill: "#22c55e", stroke: "#16a34a", badgeText: "Target_40 (Weld Start)", label: "WELD START" },
+  weld_end: { fill: "#ef4444", stroke: "#dc2626", badgeText: "Target_20_5 (Weld End)", label: "WELD END" },
+  retract: { fill: "#a855f7", stroke: "#7c3aed", badgeText: "Target_20 (Retract)", label: "RETRACT" },
 };
 
-// Per-waypoint label placement config to avoid overlapping
-const LABEL_PLACEMENT = {
-  home: { dx: 0, dy: -22, anchor: "middle" },
-  approach: { dx: -40, dy: -14, anchor: "end" },
-  weld_start: { dx: 0, dy: 20, anchor: "middle" },
-  weld_end: { dx: 0, dy: 20, anchor: "middle" },
-  retract: { dx: 40, dy: -14, anchor: "start" },
+// Precise badge anchor offsets directly attached to node (cx, cy)
+// home: Placed directly above (cx, cy - 32px)
+// Target_30 (Approach): Placed Top-Left (cx - 45px, cy - 30px) (Yellow Pill)
+// Target_40 (Weld Start): Placed Bottom-Left (cx - 45px, cy + 30px) (Green Pill)
+// Target_20_5 (Weld End): Placed Bottom-Right (cx + 45px, cy + 30px) (Red Pill)
+// Target_20 (Retract): Placed Top-Right (cx + 45px, cy - 30px) (Purple Pill)
+const BADGE_OFFSETS = {
+  home: { dx: 0, dy: -32 },
+  approach: { dx: -45, dy: -30 },
+  weld_start: { dx: -45, dy: 30 },
+  weld_end: { dx: 45, dy: 30 },
+  retract: { dx: 45, dy: -30 },
 };
 
 export default function ParseMapPage() {
   const router = useRouter();
   const { showToast } = useToast();
   const {
-    rawPayload,
     canonicalWeldPath,
     setCanonicalPath,
     updateProgress,
@@ -60,8 +64,8 @@ export default function ParseMapPage() {
         const res = await axiosClient.post("/process-pipeline");
         if (!cancelled && res.data && res.data.success) {
           setPipelineData(res.data.pipeline);
-          setTimeout(() => { if (!cancelled) setSvgAnimPhase(1); }, 200);
-          setTimeout(() => { if (!cancelled) setSvgAnimPhase(2); }, 1800);
+          setTimeout(() => { if (!cancelled) setSvgAnimPhase(1); }, 150);
+          setTimeout(() => { if (!cancelled) setSvgAnimPhase(2); }, 1200);
         }
       } catch (e) {
         console.warn("Failed fetching pipeline data from backend API:", e.message);
@@ -77,7 +81,7 @@ export default function ParseMapPage() {
           next[i] = "processing";
           return next;
         });
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 250));
         if (cancelled) return;
         setPipelineStatuses((prev) => {
           const next = [...prev];
@@ -91,7 +95,7 @@ export default function ParseMapPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Build active waypoints from the pipeline response
+  // Build active waypoints from the pipeline response or calibrated fallbacks
   const activeTargets = useMemo(() => {
     if (pipelineData?.waypoints && pipelineData.waypoints.length > 0) {
       return pipelineData.waypoints;
@@ -100,33 +104,52 @@ export default function ParseMapPage() {
       return canonicalWeldPath.waypoints;
     }
     return [
-      { id: "home", name: "home", pos: [226.61, 1023.25, 722.07], type: "home", speed: "v100", zone: "z100" },
-      { id: "Target_30", name: "Target_30", pos: [427.75, 1074.86, 350.34], type: "approach", speed: "v80", zone: "fine" },
-      { id: "Target_40", name: "Target_40", pos: [414.69, 1112.75, 320.34], type: "weld_start", speed: "v100", zone: "fine" },
-      { id: "Target_20_5", name: "Target_20_5", pos: [338.53, 1333.74, 322.07], type: "weld_end", speed: "v100", zone: "fine" },
-      { id: "Target_20", name: "Target_20", pos: [338.53, 1333.74, 362.07], type: "retract", speed: "v100", zone: "fine" },
+      { id: "home", name: "home", pos: [1178.8902, 0.0, 809.4194], type: "home", speed: "v100", zone: "z100" },
+      { id: "Target_30", name: "Target_30", pos: [1134.5077, -28.1485, 503.3040], type: "approach", speed: "v80", zone: "fine" },
+      { id: "Target_40", name: "Target_40", pos: [1133.5288, -38.2234, 480.2780], type: "weld_start", speed: "v100", zone: "fine" },
+      { id: "Target_20_5", name: "Target_20_5", pos: [877.8847, -53.0689, 454.1966], type: "weld_end", speed: "v100", zone: "fine" },
+      { id: "Target_20", name: "Target_20", pos: [878.7127, -27.5201, 507.3889], type: "retract", speed: "v100", zone: "fine" },
     ];
   }, [pipelineData, canonicalWeldPath]);
 
   const seam = pipelineData?.seam || null;
 
-  const getX = (wp) => wp.pos ? wp.pos[0] : (wp.x ?? 0);
-  const getY = (wp) => wp.pos ? wp.pos[1] : (wp.y ?? 0);
-  const getZ = (wp) => wp.pos ? wp.pos[2] : (wp.z ?? 0);
+  const getX = (wp) => (wp?.pos ? wp.pos[0] : (wp?.x ?? 0));
+  const getY = (wp) => (wp?.pos ? wp.pos[1] : (wp?.y ?? 0));
+  const getZ = (wp) => (wp?.pos ? wp.pos[2] : (wp?.z ?? 0));
 
   const weldStartWP = activeTargets.find((wp) => wp.type === "weld_start") || activeTargets[2];
   const weldEndWP = activeTargets.find((wp) => wp.type === "weld_end") || activeTargets[3];
 
-  const weldStartDisplay = seam
-    ? `[${seam.startPoint.x.toFixed(2)}, ${seam.startPoint.y.toFixed(2)}, ${seam.startPoint.z.toFixed(2)}]`
-    : weldStartWP
-      ? `[${getX(weldStartWP).toFixed(2)}, ${getY(weldStartWP).toFixed(2)}, ${getZ(weldStartWP).toFixed(2)}]`
-      : "[—]";
-  const weldEndDisplay = seam
-    ? `[${seam.endPoint.x.toFixed(2)}, ${seam.endPoint.y.toFixed(2)}, ${seam.endPoint.z.toFixed(2)}]`
-    : weldEndWP
-      ? `[${getX(weldEndWP).toFixed(2)}, ${getY(weldEndWP).toFixed(2)}, ${getZ(weldEndWP).toFixed(2)}]`
-      : "[—]";
+  // ALWAYS display mapped table coordinates from the synthesized waypoints
+  const weldStartDisplay = weldStartWP
+    ? `[${getX(weldStartWP).toFixed(2)}, ${getY(weldStartWP).toFixed(2)}, ${getZ(weldStartWP).toFixed(2)}]`
+    : "[1133.53, -38.22, 480.28]";
+
+  const weldEndDisplay = weldEndWP
+    ? `[${getX(weldEndWP).toFixed(2)}, ${getY(weldEndWP).toFixed(2)}, ${getZ(weldEndWP).toFixed(2)}]`
+    : "[877.88, -53.07, 454.20]";
+
+  // Compute strictly positive Euclidean seam length
+  const seamLength = useMemo(() => {
+    if (weldStartWP && weldEndWP) {
+      const dx = getX(weldEndWP) - getX(weldStartWP);
+      const dy = getY(weldEndWP) - getY(weldStartWP);
+      const dz = getZ(weldEndWP) - getZ(weldStartWP);
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d > 0.1) return Math.abs(d);
+    }
+    if (seam?.startPoint && seam?.endPoint) {
+      const dx = seam.endPoint.x - seam.startPoint.x;
+      const dy = seam.endPoint.y - seam.startPoint.y;
+      const dz = seam.endPoint.z - seam.startPoint.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d > 0.1) return Math.abs(d);
+    }
+    return 233.8;
+  }, [weldStartWP, weldEndWP, seam]);
+
+  const seamGapWidth = Math.abs(seam?.seamWidth ?? 5.54);
 
   const sourceFile = pipelineData?.sourceFile || "Feature.txt";
   const totalWaypoints = activeTargets.length;
@@ -163,17 +186,15 @@ export default function ParseMapPage() {
   };
 
   // ─── Isometric 2.5D Projection ────────────────────────────────────────
-  // Combines X, Y (horizontal spread) with Z (vertical height) so elevation
-  // differences between e.g. Target_20 and Target_20_5 are clearly visible.
-  const SVG_W = 580;
-  const SVG_H = 340;
-  const PAD = 65;
+  const SVG_W = 620;
+  const SVG_H = 360;
+  const PAD_X = 90;
+  const PAD_Y = 80;
 
   const bounds = useMemo(() => {
     let minPx = Infinity, maxPx = -Infinity;
     let minPy = Infinity, maxPy = -Infinity;
     activeTargets.forEach((p) => {
-      // Isometric: project x,y onto a single horizontal axis, use z for vertical
       const ix = getX(p) * 0.7 + getY(p) * 0.7;
       const iy = getZ(p) - getY(p) * 0.25;
       if (ix < minPx) minPx = ix;
@@ -181,8 +202,8 @@ export default function ParseMapPage() {
       if (iy < minPy) minPy = iy;
       if (iy > maxPy) maxPy = iy;
     });
-    const padX = (maxPx - minPx) * 0.12 || 50;
-    const padY = (maxPy - minPy) * 0.15 || 50;
+    const padX = (maxPx - minPx) * 0.20 || 50;
+    const padY = (maxPy - minPy) * 0.25 || 50;
     return { minX: minPx - padX, maxX: maxPx + padX, minY: minPy - padY, maxY: maxPy + padY };
   }, [activeTargets]);
 
@@ -194,8 +215,8 @@ export default function ParseMapPage() {
     const normX = (ix - bounds.minX) / rangeX;
     const normY = (iy - bounds.minY) / rangeY;
     return {
-      x: PAD + normX * (SVG_W - PAD * 2),
-      y: (SVG_H - PAD) - normY * (SVG_H - PAD * 2),
+      x: PAD_X + normX * (SVG_W - PAD_X * 2),
+      y: (SVG_H - PAD_Y) - normY * (SVG_H - PAD_Y * 2),
     };
   };
 
@@ -206,6 +227,7 @@ export default function ParseMapPage() {
       name: pt.name || pt.id || "?",
       speed: pt.speed || "v100",
       zone: pt.zone || "fine",
+      pos: pt.pos || [getX(pt), getY(pt), getZ(pt)],
     }));
   }, [activeTargets, bounds]);
 
@@ -227,7 +249,7 @@ export default function ParseMapPage() {
         dash = "";
         glow = true;
       } else if (from.type === "approach" && to.type === "weld_start") {
-        color = "#3b82f6";
+        color = "#eab308";
         width = 2;
         dash = "5,3";
       } else if (from.type === "weld_end" && to.type === "retract") {
@@ -244,9 +266,78 @@ export default function ParseMapPage() {
     return segs;
   }, [projectedPoints]);
 
-  const seamWidthVal = seam?.seamWidth || 5;
+  const seamWidthVal = seam?.seamWidth || 5.54;
   const weldStartPt = projectedPoints.find((p) => p.type === "weld_start");
   const weldEndPt = projectedPoints.find((p) => p.type === "weld_end");
+
+  // Dynamic 2D perpendicular normal and unit vectors
+  const seam2d = useMemo(() => {
+    if (!weldStartPt || !weldEndPt) {
+      return {
+        u: { x: 1, y: 0 },
+        n: { x: 0, y: -1 },
+        mid: { x: SVG_W / 2, y: SVG_H / 2 },
+      };
+    }
+    const dx = weldEndPt.x - weldStartPt.x;
+    const dy = weldEndPt.y - weldStartPt.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const u = { x: dx / len, y: dy / len };
+    let n = { x: -u.y, y: u.x };
+    // Ensure n points towards upper/left half-plane (away from seam)
+    if (n.y > 0 || (Math.abs(n.y) < 0.001 && n.x > 0)) {
+      n.x = -n.x;
+      n.y = -n.y;
+    }
+    const mid = {
+      x: (weldStartPt.x + weldEndPt.x) / 2,
+      y: (weldStartPt.y + weldEndPt.y) / 2,
+    };
+    return { u, n, mid };
+  }, [weldStartPt, weldEndPt]);
+
+  // Seam dimension tag position (offset along +n_2d * 18px from midpoint)
+  const seamDimPos = useMemo(() => {
+    if (!weldStartPt || !weldEndPt) return null;
+    return {
+      x: seam2d.mid.x + seam2d.n.x * 18,
+      y: seam2d.mid.y + seam2d.n.y * 18,
+    };
+  }, [weldStartPt, weldEndPt, seam2d]);
+
+  // Dynamic Perpendicular Badge Offsets
+  const getBadgeOffset = useCallback((ptType) => {
+    const { u, n } = seam2d;
+    switch (ptType) {
+      case "approach":
+        // +n_2d * 35px - u_2d * 25px (Yellow Pill)
+        return {
+          dx: n.x * 35 - u.x * 25,
+          dy: n.y * 35 - u.y * 25,
+        };
+      case "retract":
+        // +n_2d * 35px + u_2d * 25px (Purple Pill)
+        return {
+          dx: n.x * 35 + u.x * 25,
+          dy: n.y * 35 + u.y * 25,
+        };
+      case "weld_start":
+        // -n_2d * 35px - u_2d * 20px (Green Pill)
+        return {
+          dx: -n.x * 35 - u.x * 20,
+          dy: -n.y * 35 - u.y * 20,
+        };
+      case "weld_end":
+        // -n_2d * 35px + u_2d * 20px (Red Pill)
+        return {
+          dx: -n.x * 35 + u.x * 20,
+          dy: -n.y * 35 + u.y * 20,
+        };
+      case "home":
+      default:
+        return { dx: 0, dy: -28 };
+    }
+  }, [seam2d]);
 
   return (
     <div className="flex-1 flex overflow-hidden w-full h-full relative">
@@ -375,9 +466,9 @@ export default function ParseMapPage() {
           <div className="absolute inset-0 bg-3d-viewport"></div>
           <div className="absolute inset-0 viewport-grid"></div>
 
-          <div className="relative z-10 w-full max-w-[800px] px-6 flex flex-col gap-4">
+          <div className="relative z-10 w-full max-w-[860px] px-6 flex flex-col gap-4">
             {/* SVG Trajectory Visualization */}
-            <div className="bg-surface/90 border border-outline-variant/40 rounded-xl p-5 shadow-lg backdrop-blur-md">
+            <div className="bg-surface/90 border border-outline-variant/40 rounded-xl p-5 shadow-lg backdrop-blur-md relative">
               <div className="flex items-center justify-between mb-3 border-b border-outline-variant/30 pb-2">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary text-[18px]">3d_rotation</span>
@@ -390,7 +481,27 @@ export default function ParseMapPage() {
                 </span>
               </div>
 
-              <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full bg-surface-container-lowest/50 rounded-lg border border-outline-variant/20" style={{ height: "300px" }}>
+              {/* Clean HTML Legend Card Overlay — Top-Left dedicated card */}
+              <div className="absolute top-16 left-7 z-20 bg-slate-900/90 backdrop-blur-md border border-slate-800 p-2.5 rounded-lg shadow-xl pointer-events-none flex flex-col gap-1.5 text-xs font-mono select-none">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-0.5 border-t border-dashed border-slate-500"></div>
+                  <span className="text-[10px] text-slate-300 font-semibold">Air Motion</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-0.5 border-t border-dashed border-amber-400"></div>
+                  <span className="text-[10px] text-slate-300 font-semibold">Approach/Retract</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-1 bg-cyan-400 rounded-full shadow-[0_0_8px_#22d3ee]"></div>
+                  <span className="text-[10px] text-slate-300 font-semibold">Active Weld Seam</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-white"></div>
+                  <span className="text-[10px] text-slate-300 font-semibold">Target Waypoints</span>
+                </div>
+              </div>
+
+              <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} className="w-full bg-surface-container-lowest/50 rounded-lg border border-outline-variant/20" style={{ height: "330px" }}>
                 <defs>
                   {/* Cyan glow filter for weld seam */}
                   <filter id="cyanGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -403,8 +514,8 @@ export default function ParseMapPage() {
                   <marker id="arrowGrey" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
                     <polygon points="0 0, 7 2.5, 0 5" fill="#64748b" />
                   </marker>
-                  <marker id="arrowBlue" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
-                    <polygon points="0 0, 7 2.5, 0 5" fill="#3b82f6" />
+                  <marker id="arrowYellow" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
+                    <polygon points="0 0, 7 2.5, 0 5" fill="#eab308" />
                   </marker>
                   <marker id="arrowCyan" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
                     <polygon points="0 0, 7 2.5, 0 5" fill="#22d3ee" />
@@ -417,8 +528,8 @@ export default function ParseMapPage() {
                 {/* Subtle background grid */}
                 {[0.2, 0.4, 0.6, 0.8].map((frac, i) => (
                   <React.Fragment key={`grid-${i}`}>
-                    <line x1={PAD} y1={PAD + frac * (SVG_H - PAD * 2)} x2={SVG_W - PAD} y2={PAD + frac * (SVG_H - PAD * 2)} stroke="#334155" strokeWidth="0.4" strokeDasharray="2,4" opacity="0.3" />
-                    <line x1={PAD + frac * (SVG_W - PAD * 2)} y1={PAD} x2={PAD + frac * (SVG_W - PAD * 2)} y2={SVG_H - PAD} stroke="#334155" strokeWidth="0.4" strokeDasharray="2,4" opacity="0.3" />
+                    <line x1={PAD_X - 25} y1={PAD_Y + frac * (SVG_H - PAD_Y * 2)} x2={SVG_W - PAD_X + 25} y2={PAD_Y + frac * (SVG_H - PAD_Y * 2)} stroke="#334155" strokeWidth="0.4" strokeDasharray="2,4" opacity="0.3" />
+                    <line x1={PAD_X + frac * (SVG_W - PAD_X * 2)} y1={PAD_Y - 25} x2={PAD_X + frac * (SVG_W - PAD_X * 2)} y2={SVG_H - PAD_Y + 25} stroke="#334155" strokeWidth="0.4" strokeDasharray="2,4" opacity="0.3" />
                   </React.Fragment>
                 ))}
 
@@ -427,15 +538,15 @@ export default function ParseMapPage() {
                   <line
                     x1={weldStartPt.x} y1={weldStartPt.y}
                     x2={weldEndPt.x} y2={weldEndPt.y}
-                    stroke="#22d3ee" strokeWidth={Math.max(10, seamWidthVal * 2)}
-                    strokeLinecap="round" opacity="0.08"
+                    stroke="#22d3ee" strokeWidth={Math.max(12, seamWidthVal * 2.2)}
+                    strokeLinecap="round" opacity="0.12"
                   />
                 )}
 
-                {/* Path segments with arrows */}
+                {/* Path segments with directional arrows */}
                 {segments.map((seg, i) => {
                   let marker = "url(#arrowGrey)";
-                  if (seg.color === "#3b82f6") marker = "url(#arrowBlue)";
+                  if (seg.color === "#eab308") marker = "url(#arrowYellow)";
                   else if (seg.color === "#22d3ee") marker = "url(#arrowCyan)";
                   else if (seg.color === "#a855f7") marker = "url(#arrowPurple)";
 
@@ -450,82 +561,111 @@ export default function ParseMapPage() {
                       markerEnd={marker}
                       filter={seg.glow ? "url(#cyanGlow)" : undefined}
                       opacity={svgAnimPhase >= 1 ? 1 : 0}
-                      style={{ transition: `opacity 0.5s ease ${i * 0.25}s` }}
+                      style={{ transition: `opacity 0.5s ease ${i * 0.2}s` }}
                     />
                   );
                 })}
 
-                {/* Waypoint markers with positioned labels */}
+                {/* Active Seam Dimension Tag — Centered above cyan seam line */}
+                {seamDimPos && svgAnimPhase >= 2 && (
+                  <g opacity="1" style={{ transition: "opacity 0.6s ease 0.4s" }}>
+                    <rect
+                      x={seamDimPos.x - 85}
+                      y={seamDimPos.y - 10}
+                      width="170" height="20" rx="10"
+                      fill="#0f172a" fillOpacity="0.95"
+                      stroke="#334155" strokeWidth="1.2"
+                    />
+                    <text
+                      x={seamDimPos.x}
+                      y={seamDimPos.y + 3.5}
+                      textAnchor="middle"
+                      fill="#22d3ee" fontSize="9.5" fontFamily="monospace" fontWeight="bold"
+                    >
+                      {`Length: ${Math.abs(seamLength).toFixed(1)} mm | Gap: ${seamGapWidth.toFixed(2)} mm`}
+                    </text>
+                  </g>
+                )}
+
+                {/* Dynamic Perpendicular Non-Colliding Waypoint Badges */}
                 {projectedPoints.map((pt, i) => {
-                  const colors = WP_COLORS[pt.type] || { fill: "#64748b", stroke: "#475569", label: pt.name };
-                  const placement = LABEL_PLACEMENT[pt.type] || { dx: 0, dy: -18, anchor: "middle" };
+                  const cfg = WP_CONFIG[pt.type] || { fill: "#64748b", stroke: "#475569", badgeText: pt.name };
+                  const offset = getBadgeOffset(pt.type);
                   const isKey = pt.type === "home" || pt.type === "weld_start" || pt.type === "weld_end";
-                  const r = isKey ? 6 : 4;
+                  const r = isKey ? 6 : 4.5;
+
+                  const badgeText = cfg.badgeText;
+                  const pillW = Math.max(badgeText.length * 6.8 + 18, 90);
+                  const pillH = 19;
+                  const pillRx = 9.5;
+
+                  // Center position of badge
+                  const badgeCx = pt.x + offset.dx;
+                  const badgeCy = pt.y + offset.dy;
+
+                  // Vector from node to badge for smooth leader line
+                  const vbx = badgeCx - pt.x;
+                  const vby = badgeCy - pt.y;
+                  const vDist = Math.sqrt(vbx * vbx + vby * vby) || 1;
+                  const vnx = vbx / vDist;
+                  const vny = vby / vDist;
+
+                  const leaderStartX = pt.x + vnx * r;
+                  const leaderStartY = pt.y + vny * r;
+                  const leaderEndX = badgeCx - vnx * (pillH / 2);
+                  const leaderEndY = badgeCy - vny * (pillH / 2);
 
                   return (
                     <g
                       key={`wp-${i}`}
                       opacity={svgAnimPhase >= 1 ? 1 : 0}
-                      style={{ transition: `opacity 0.4s ease ${0.4 + i * 0.18}s` }}
+                      style={{ transition: `opacity 0.4s ease ${0.25 + i * 0.12}s` }}
                     >
                       {/* Pulse ring on key waypoints */}
                       {isKey && (
-                        <circle cx={pt.x} cy={pt.y} r={r + 4} fill="none" stroke={colors.fill} strokeWidth="1" opacity="0.3">
+                        <circle cx={pt.x} cy={pt.y} r={r + 4} fill="none" stroke={cfg.fill} strokeWidth="1" opacity="0.35">
                           <animate attributeName="r" from={r + 2} to={r + 10} dur="2.5s" repeatCount="indefinite" />
-                          <animate attributeName="opacity" from="0.4" to="0" dur="2.5s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" from="0.5" to="0" dur="2.5s" repeatCount="indefinite" />
                         </circle>
                       )}
 
-                      {/* Dot */}
-                      <circle cx={pt.x} cy={pt.y} r={r} fill={colors.fill} stroke="#ffffff" strokeWidth="1.5" />
+                      {/* Waypoint Dot */}
+                      <circle cx={pt.x} cy={pt.y} r={r} fill={cfg.fill} stroke="#ffffff" strokeWidth="1.5" />
 
-                      {/* Leader line to label */}
+                      {/* Direct short leader line from node to badge */}
                       <line
-                        x1={pt.x} y1={pt.y}
-                        x2={pt.x + placement.dx * 0.5} y2={pt.y + (placement.dy > 0 ? 8 : -8)}
-                        stroke={colors.fill} strokeWidth="0.8" strokeDasharray="1,1" opacity="0.4"
+                        x1={leaderStartX} y1={leaderStartY}
+                        x2={leaderEndX} y2={leaderEndY}
+                        stroke={cfg.fill} strokeWidth="1.2" strokeDasharray="2,2" opacity="0.75"
                       />
 
-                      {/* Label badge */}
+                      {/* Pill Badge centered at (badgeCx, badgeCy) */}
                       <rect
-                        x={pt.x + placement.dx - (placement.anchor === "end" ? 56 : placement.anchor === "start" ? 0 : 30)}
-                        y={pt.y + placement.dy - 8}
-                        width="60" height="15" rx="3"
-                        fill={colors.fill} opacity="0.92"
+                        x={badgeCx - pillW / 2} y={badgeCy - pillH / 2}
+                        width={pillW} height={pillH} rx={pillRx}
+                        fill={cfg.fill} fillOpacity="0.95"
+                        stroke="#ffffff" strokeWidth="0.8" strokeOpacity="0.6"
                       />
                       <text
-                        x={pt.x + placement.dx - (placement.anchor === "end" ? 26 : placement.anchor === "start" ? 30 : 0)}
-                        y={pt.y + placement.dy + 3}
+                        x={badgeCx}
+                        y={badgeCy + 3.8}
                         textAnchor="middle"
-                        fill="#ffffff" fontSize="7.5" fontFamily="monospace" fontWeight="bold"
+                        fill="#ffffff" fontSize="8.5" fontFamily="monospace" fontWeight="bold"
                       >
-                        {pt.name}
+                        {badgeText}
                       </text>
                     </g>
                   );
                 })}
 
-                {/* Axis indicator — top-left corner, clear of legend */}
-                <g transform={`translate(${PAD - 10}, ${SVG_H - PAD + 10})`}>
+                {/* Axis indicator — bottom-left */}
+                <g transform={`translate(${PAD_X - 45}, ${SVG_H - PAD_Y + 30})`}>
                   <line x1="0" y1="0" x2="22" y2="0" stroke="#ef4444" strokeWidth="1.5" />
                   <line x1="0" y1="0" x2="0" y2="-22" stroke="#22d3ee" strokeWidth="1.5" />
                   <line x1="0" y1="0" x2="12" y2="-10" stroke="#a3e635" strokeWidth="1.5" />
                   <text x="26" y="3" fill="#ef4444" fontSize="8" fontFamily="monospace" fontWeight="bold">X</text>
                   <text x="-2" y="-26" fill="#22d3ee" fontSize="8" fontFamily="monospace" fontWeight="bold">Z</text>
                   <text x="14" y="-12" fill="#a3e635" fontSize="8" fontFamily="monospace" fontWeight="bold">Y</text>
-                </g>
-
-                {/* Legend — top-right, well-separated from axes */}
-                <g transform={`translate(${SVG_W - 145}, ${PAD - 5})`}>
-                  <rect x="-6" y="-6" width="138" height="58" rx="4" fill="#0f172a" opacity="0.6" />
-                  <line x1="2" y1="4" x2="18" y2="4" stroke="#475569" strokeWidth="1.5" strokeDasharray="4,3" />
-                  <text x="24" y="7" fill="#94a3b8" fontSize="7" fontFamily="monospace">Air Motion</text>
-                  <line x1="2" y1="16" x2="18" y2="16" stroke="#3b82f6" strokeWidth="2" strokeDasharray="5,3" />
-                  <text x="24" y="19" fill="#94a3b8" fontSize="7" fontFamily="monospace">Approach / Retract</text>
-                  <line x1="2" y1="28" x2="18" y2="28" stroke="#22d3ee" strokeWidth="3" filter="url(#cyanGlow)" />
-                  <text x="24" y="31" fill="#94a3b8" fontSize="7" fontFamily="monospace">Active Weld Seam</text>
-                  <circle cx="10" cy="42" r="3" fill="#22c55e" stroke="#fff" strokeWidth="1" />
-                  <text x="24" y="45" fill="#94a3b8" fontSize="7" fontFamily="monospace">Start / End Markers</text>
                 </g>
               </svg>
             </div>
@@ -551,11 +691,11 @@ export default function ParseMapPage() {
                   </thead>
                   <tbody>
                     {activeTargets.map((wp, i) => {
-                      const colors = WP_COLORS[wp.type] || { fill: "#64748b" };
+                      const cfg = WP_CONFIG[wp.type] || { fill: "#64748b" };
                       return (
                         <tr key={i} className="border-b border-outline-variant/15 hover:bg-surface-container-lowest/60 transition-colors">
                           <td className="py-1.5 pr-3">
-                            <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: colors.fill }}></span>
+                            <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: cfg.fill }}></span>
                             {i + 1}
                           </td>
                           <td className="py-1.5 pr-3 font-bold text-on-surface">{wp.name || wp.id}</td>
