@@ -102,14 +102,12 @@ function generateRapidCode(waypoints) {
   // --- PROC Path_10() (verified RAPID template) ---
   lines.push('');
   lines.push('    PROC Path_10()');
-  lines.push('        ConfJ \\Off;');
-  lines.push('        ConfL \\Off;');
-  lines.push('        MoveL home,v100,z100,tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_30,v80,fine,tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_40,v100,fine,tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_20_5,v100,fine,tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_20,v100,fine,tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL home,v100,fine,tWeldGun\\WObj:=wobj0;');
+  lines.push('        MoveJ home, v100, z100, tWeldGun\\WObj:=wobj0;');
+  lines.push('        MoveL Target_30, v60, z10, tWeldGun\\WObj:=wobj0;');
+  lines.push('        MoveL Target_40, v100, fine, tWeldGun\\WObj:=wobj0;');
+  lines.push('        MoveL Target_20_5, v100, fine, tWeldGun\\WObj:=wobj0;');
+  lines.push('        MoveL Target_20, v80, z10, tWeldGun\\WObj:=wobj0;');
+  lines.push('        MoveL home, v100, fine, tWeldGun\\WObj:=wobj0;');
   lines.push('    ENDPROC');
   lines.push('ENDMODULE');
 

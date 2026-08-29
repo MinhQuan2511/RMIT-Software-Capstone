@@ -24,7 +24,6 @@
  * All positions and orientations are verified against a known-good RobotStudio
  * execution — coordinates are NOT raw camera values.
  */
-
 /**
  * @typedef {Object} RobotWaypoint
  * @property {string}   id     - Unique waypoint identifier
@@ -82,6 +81,11 @@ function planWaypoints(seam) {
     wy = 1;
   }
 
+  // Unit vector representation
+  const uSeam = [ux, uy, uz];
+  const uWidth = [wx, wy, 0];
+  const uUp = [0, 0, 1];
+
   // 1. Target_40 (Weld Start): Exactly P_start = [x1, y1, z1]
   const WELD_START = [
     parseFloat(x1.toFixed(4)),
@@ -117,9 +121,12 @@ function planWaypoints(seam) {
     parseFloat((Math.max(z1, z2) + 350).toFixed(4)),
   ];
 
-  // --- Verified industrial tool orientations ---
-  const homeOrient = [0.069756473, 0.0, 0.99756405, 0.0];
-  const weldOrient = [0.0, 0.0, 0.965925826, -0.258819045];
+  // --- Orientations ---
+  // 1. Default upright quaternion for home & Target_20
+  const uprightQuat = [0, 0.38268343, 0.92387953, 0];
+
+  // 2. 45-degree fillet weld quaternion for Target_30, Target_40, Target_20_5
+  const weldQuat = [0.38268343, 0.14943801, 0.88701083, -0.19826693];
 
   return [
     // 1. Home position (high-clearance overhead standby)
@@ -127,7 +134,7 @@ function planWaypoints(seam) {
       id:     'home',
       name:   'home',
       pos:    HOME,
-      orient: homeOrient,
+      orient: uprightQuat,
       conf:   [0, 0, 0, 0],
       type:   'home',
       speed:  'v100',
@@ -139,11 +146,11 @@ function planWaypoints(seam) {
       id:     'Target_30',
       name:   'Target_30',
       pos:    APPROACH,
-      orient: weldOrient,
-      conf:   [-1, 0, -1, 0],
+      orient: weldQuat,
+      conf:   [0, 0, 0, 0],
       type:   'approach',
-      speed:  'v80',
-      zone:   'fine',
+      speed:  'v60',
+      zone:   'z10',
     },
 
     // 3. Target_40 – Weld Start (calibrated table anchor)
@@ -151,7 +158,7 @@ function planWaypoints(seam) {
       id:     'Target_40',
       name:   'Target_40',
       pos:    WELD_START,
-      orient: weldOrient,
+      orient: weldQuat,
       conf:   [0, 0, 0, 0],
       type:   'weld_start',
       speed:  'v100',
@@ -163,8 +170,8 @@ function planWaypoints(seam) {
       id:     'Target_20_5',
       name:   'Target_20_5',
       pos:    WELD_END,
-      orient: weldOrient,
-      conf:   [0, -1, 0, 0],
+      orient: weldQuat,
+      conf:   [0, 0, 0, 0],
       type:   'weld_end',
       speed:  'v100',
       zone:   'fine',
@@ -175,11 +182,11 @@ function planWaypoints(seam) {
       id:     'Target_20',
       name:   'Target_20',
       pos:    RETRACT,
-      orient: weldOrient,
-      conf:   [-1, 0, -1, 0],
+      orient: uprightQuat,
+      conf:   [0, 0, 0, 0],
       type:   'retract',
-      speed:  'v100',
-      zone:   'fine',
+      speed:  'v80',
+      zone:   'z10',
     },
   ];
 }
