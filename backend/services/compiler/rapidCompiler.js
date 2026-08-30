@@ -36,10 +36,10 @@ function fmtNum(n) {
  * @returns {string}
  */
 function buildRobtarget(name, pos, orient, conf) {
-  const posStr    = pos.map(fmtNum).join(',');
+  const posStr = pos.map(fmtNum).join(',');
   const orientStr = orient.map(fmtNum).join(',');
-  const confStr   = conf.map(fmtNum).join(',');
-  const extAxStr  = '9E+09,9E+09,9E+09,9E+09,9E+09,9E+09';
+  const confStr = conf.map(fmtNum).join(',');
+  const extAxStr = '9E+09,9E+09,9E+09,9E+09,9E+09,9E+09';
 
   return `    CONST robtarget ${name}:=[[${posStr}],[${orientStr}],[${confStr}],[${extAxStr}]];`;
 }
@@ -60,7 +60,7 @@ function generateRapidCode(waypoints) {
   }
 
   // Separate the home waypoint from motion targets
-  const homeWP    = waypoints.find((wp) => wp.type === 'home');
+  const homeWP = waypoints.find((wp) => wp.type === 'home');
   const targetWPs = waypoints.filter((wp) => wp.type !== 'home');
 
   if (!homeWP) {
@@ -89,7 +89,7 @@ function generateRapidCode(waypoints) {
   lines.push('    !***********************************************************');
   lines.push('    ! Module: Module1');
   lines.push('    ! Description: Auto-generated from VertexDynamics Pipeline');
-  lines.push('    ! Author: hieun');
+  lines.push('    ! Author: VertexDynamics');
   lines.push('    ! Version: 1.0');
   lines.push('    !***********************************************************');
 
