@@ -1,12 +1,29 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
 import { useToast } from "@/components/ToastContext";
 import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
 import axiosClient from "@/services/axiosClient";
+
+// Queue statuses reported by the watch-folder scan, plus the local ones.
+const QUEUE_STATUS_STYLES = {
+  Ready: "bg-green-500/10 text-green-600",
+  Ingested: "bg-blue-500/10 text-blue-600",
+  Completed: "bg-green-500/10 text-green-600",
+  Writing: "bg-amber-500/10 text-amber-600",
+  Staged: "bg-amber-500/10 text-amber-600",
+  Ignored: "bg-slate-500/10 text-slate-500",
+  Error: "bg-red-500/10 text-red-600",
+};
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function AcquirePage() {
   const router = useRouter();
@@ -22,7 +39,12 @@ export default function AcquirePage() {
     rawPayload,
   } = useTcpWorkflow();
 
-  const [watchFolder, setWatchFolder] = useState("C:\\TracerBridge\\Inbound\\");
+  // The configured watch folder, as the backend resolved it, plus the draft
+  // the user is editing and the last thing the backend said about it.
+  const [watchFolder, setWatchFolder] = useState("");
+  const [watchFolderDraft, setWatchFolderDraft] = useState("");
+  const [watchStatus, setWatchStatus] = useState(null);
+  const [savingFolder, setSavingFolder] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
   const [acquisitionComplete, setAcquisitionComplete] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -52,30 +74,89 @@ export default function AcquirePage() {
     }
   }, [acquisitionComplete, rawPayload]);
 
-  // Scan watched folder automatically if selected
+  // Load the configured watch folder once on mount.
   useEffect(() => {
-    if (acquisitionMethod === "watched-folder" && acquisitionQueue.length === 0) {
-      scanWatchedFolder();
-    }
-  }, [acquisitionMethod]);
-
-  // Trigger backend scan for watched folder
-  const scanWatchedFolder = async () => {
-    try {
-      const res = await axiosClient.post("/ingest-files");
-      if (res.data && res.data.success) {
-        const data = res.data.data;
-        const newItems = data.filesFound.map((file) => ({
-          id: `file_${file}_${Date.now()}`,
-          item: file,
-          source: "Watched Folder",
-          status: "Ready",
-          lastUpdate: new Date().toLocaleTimeString(),
-        }));
-        setAcquisitionQueue(newItems);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await axiosClient.get("/watch-folder");
+        if (cancelled || !res.data?.success) return;
+        setWatchFolder(res.data.watchFolder);
+        setWatchFolderDraft(res.data.watchFolder);
+      } catch (e) {
+        console.warn("Failed reading watch folder config:", e.message);
+        setWatchStatus({ ok: false, message: "Backend unreachable — cannot read watch folder." });
       }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Poll the real directory. The backend lists it, holds back any file whose
+  // size is still changing, and copies settled feature files into uploads/.
+  const scanWatchedFolder = useCallback(async () => {
+    try {
+      const res = await axiosClient.post("/scan-watch-folder");
+      const data = res.data || {};
+
+      setWatchStatus({ ok: !!data.success, message: data.message || "" });
+
+      if (!data.success) {
+        setAcquisitionQueue([]);
+        return;
+      }
+
+      setAcquisitionQueue(
+        (data.files || []).map((f) => ({
+          id: `watched_${f.name}`,
+          item: f.name,
+          source: "Watched Folder",
+          status: f.status,
+          size: f.size,
+          modified: f.modified,
+          lastUpdate: new Date(f.modified).toLocaleTimeString(),
+        }))
+      );
     } catch (e) {
-      console.warn("Failed scanning watched folder:", e.message);
+      setWatchStatus({ ok: false, message: `Backend unreachable: ${e.message}` });
+    }
+  }, [setAcquisitionQueue]);
+
+  // Poll every 3 seconds while Acquire is open and the watched folder is the
+  // selected method. fs.watch is deliberately avoided — on Windows it fires
+  // duplicate and partial events for a file that is still being written.
+  useEffect(() => {
+    if (acquisitionMethod !== "watched-folder") return;
+
+    scanWatchedFolder();
+    const interval = setInterval(scanWatchedFolder, 3000);
+    return () => clearInterval(interval);
+  }, [acquisitionMethod, scanWatchedFolder]);
+
+  // Persist an edited path, then immediately re-scan whatever it now points at.
+  const handleSaveWatchFolder = async () => {
+    const next = watchFolderDraft.trim();
+    if (!next) return;
+
+    setSavingFolder(true);
+    try {
+      const res = await axiosClient.put("/watch-folder", { watchFolder: next });
+      const data = res.data || {};
+      const saved = data.watchFolder || next;
+
+      setWatchFolder(saved);
+      setWatchFolderDraft(saved);
+      setWatchStatus({ ok: !!data.exists, message: data.message || "" });
+      showToast(data.exists ? "✓ Saved" : "⚠ Saved", data.message, data.exists ? "success" : "info");
+
+      await scanWatchedFolder();
+    } catch (e) {
+      const message = e.response?.data?.error || e.message;
+      setWatchStatus({ ok: false, message });
+      showToast("❌ Error", message, "error");
+    } finally {
+      setSavingFolder(false);
     }
   };
 
@@ -120,14 +201,17 @@ export default function AcquirePage() {
         updateProgress({ acquisitionComplete: true });
         setAcquisitionComplete(true);
 
-        // Update queue item status to Completed
-        setAcquisitionQueue((prev) =>
-          prev.map((q) => ({
-            ...q,
-            status: "Completed",
-            lastUpdate: new Date().toLocaleTimeString(),
-          }))
-        );
+        // Manual imports have no server-side status of their own; watched
+        // folder rows keep the status the next poll reports.
+        if (acquisitionMethod !== "watched-folder") {
+          setAcquisitionQueue((prev) =>
+            prev.map((q) => ({
+              ...q,
+              status: "Completed",
+              lastUpdate: new Date().toLocaleTimeString(),
+            }))
+          );
+        }
 
         showToast("✓ Ingested", `Trajectory points processed successfully.`, "success");
       }
@@ -206,9 +290,45 @@ export default function AcquirePage() {
               <span className="material-symbols-outlined text-[18px] text-primary">folder_copy</span>File Ingestion
             </h3>
             {acquisitionMethod === "watched-folder" ? (
-              <div className="flex gap-2">
-                <input type="text" value={watchFolder} readOnly className="flex-1 bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono" />
-                <button onClick={scanWatchedFolder} className="bg-primary/10 text-primary px-3 py-2 rounded-md font-bold text-xs cursor-pointer">Scan</button>
+              <div className="flex flex-col gap-2.5">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={watchFolderDraft}
+                    onChange={(e) => setWatchFolderDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveWatchFolder();
+                    }}
+                    spellCheck={false}
+                    placeholder={"C:\\path\\to\\watched\\folder"}
+                    className="flex-1 min-w-0 bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary"
+                  />
+                  <button
+                    onClick={handleSaveWatchFolder}
+                    disabled={savingFolder || !watchFolderDraft.trim() || watchFolderDraft.trim() === watchFolder}
+                    className="bg-primary text-on-primary disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:cursor-not-allowed px-3 py-2 rounded-md font-bold text-xs cursor-pointer shrink-0"
+                  >
+                    {savingFolder ? "Saving" : "Save"}
+                  </button>
+                  <button
+                    onClick={scanWatchedFolder}
+                    className="bg-primary/10 text-primary px-3 py-2 rounded-md font-bold text-xs cursor-pointer shrink-0"
+                  >
+                    Scan
+                  </button>
+                </div>
+
+                {/* Live status line — polled every 3 seconds */}
+                <div className="flex items-center gap-2 text-[10px] font-semibold">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      !watchStatus ? "bg-slate-400" : watchStatus.ok ? "bg-green-500 animate-pulse" : "bg-red-500"
+                    }`}
+                  ></span>
+                  <span className={!watchStatus ? "text-on-surface-variant" : watchStatus.ok ? "text-on-surface-variant" : "text-red-500"}>
+                    {watchStatus ? watchStatus.message : "Checking watch folder\u2026"}
+                  </span>
+                </div>
               </div>
             ) : (
               <input type="file" multiple onChange={handleFileSelect} className="w-full text-xs text-on-surface-variant file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-on-primary cursor-pointer" />
@@ -221,19 +341,32 @@ export default function AcquirePage() {
             <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
               <span className="material-symbols-outlined text-[18px] text-primary">queue</span>Queue ({acquisitionQueue.length})
             </h3>
-            <div className="overflow-x-auto max-h-[120px]">
+            <div className="overflow-x-auto max-h-[140px]">
               <table className="w-full text-[11px]">
                 <tbody>
-                  {acquisitionQueue.map((q) => (
-                    <tr key={q.id} className="border-t border-outline-variant/30">
-                      <td className="py-2 font-mono font-bold text-on-surface truncate max-w-[150px]">{q.item}</td>
-                      <td className="py-2 text-right">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${q.status === 'Completed' ? 'bg-green-500/10 text-green-600' : 'bg-amber-500/10 text-amber-600'}`}>
-                          {q.status}
-                        </span>
+                  {acquisitionQueue.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="py-3 text-center text-on-surface-variant italic text-[10px]">
+                        Nothing queued.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    acquisitionQueue.map((q) => (
+                      <tr key={q.id} className="border-t border-outline-variant/30">
+                        <td className="py-2 pr-2 font-mono font-bold text-on-surface truncate max-w-[150px]" title={q.item}>
+                          {q.item}
+                        </td>
+                        <td className="py-2 px-2 text-right text-[10px] text-on-surface-variant font-mono whitespace-nowrap">
+                          {typeof q.size === "number" ? `${formatBytes(q.size)} \u00b7 ${q.lastUpdate}` : q.lastUpdate}
+                        </td>
+                        <td className="py-2 pl-2 text-right">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${QUEUE_STATUS_STYLES[q.status] || "bg-slate-500/10 text-slate-500"}`}>
+                            {q.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -264,8 +397,20 @@ export default function AcquirePage() {
           <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-2">
               <span className="material-symbols-outlined text-blue-400 text-lg">folder_open</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${acquisitionQueue.length > 0 ? "bg-green-500/10 text-green-400" : "bg-slate-700 text-slate-400"}`}>
-                {acquisitionQueue.length > 0 ? "FILES READY" : "IDLE"}
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  acquisitionMethod === "watched-folder" && watchStatus && !watchStatus.ok
+                    ? "bg-red-500/10 text-red-400"
+                    : acquisitionQueue.length > 0
+                    ? "bg-green-500/10 text-green-400"
+                    : "bg-slate-700 text-slate-400"
+                }`}
+              >
+                {acquisitionMethod === "watched-folder" && watchStatus && !watchStatus.ok
+                  ? "NOT FOUND"
+                  : acquisitionQueue.length > 0
+                  ? "FILES READY"
+                  : "IDLE"}
               </span>
             </div>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
@@ -275,7 +420,7 @@ export default function AcquirePage() {
               className="text-sm font-mono font-bold text-slate-100 truncate"
               title={acquisitionMethod === "watched-folder" ? watchFolder : "Local file selection"}
             >
-              {acquisitionMethod === "watched-folder" ? watchFolder : "Local file selection"}
+              {acquisitionMethod === "watched-folder" ? watchFolder || "\u2014" : "Local file selection"}
             </p>
           </div>
 

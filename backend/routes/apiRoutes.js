@@ -40,6 +40,228 @@ function findLatestFeatureFile(dir) {
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * Watched folder
+ *
+ * A real directory on disk, polled by the frontend. The path lives in
+ * backend/config.json so it survives a restart, seeded from WATCH_FOLDER
+ * in the environment on first run.
+ *
+ * Polling rather than fs.watch is deliberate: on Windows fs.watch fires
+ * duplicate and partial events for a file that is still being written. A
+ * poll comparing size and mtime is boringly predictable.
+ * ------------------------------------------------------------------ */
+
+const CONFIG_PATH = path.join(__dirname, '../config.json');
+const REPO_ROOT = path.join(__dirname, '../..');
+
+// samples/ ships with a straight and an arc feature file, so the watched
+// folder demonstrates itself on a fresh checkout. Stored relative so
+// config.json stays portable between machines.
+const DEFAULT_WATCH_FOLDER = process.env.WATCH_FOLDER || 'samples';
+
+/**
+ * Watch folder paths may be absolute (what someone types on the Acquire page)
+ * or relative to the repo root (what ships in config.json).
+ */
+function resolveWatchFolder(configured) {
+  return path.isAbsolute(configured) ? configured : path.resolve(REPO_ROOT, configured);
+}
+
+function readConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      if (parsed && typeof parsed.watchFolder === 'string' && parsed.watchFolder.trim()) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('watch-folder: config.json unreadable, falling back to default:', err.message);
+  }
+  return { watchFolder: DEFAULT_WATCH_FOLDER };
+}
+
+function writeConfig(config) {
+  fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+}
+
+/** A feature file is a .txt carrying either seam format. */
+function isFeatureFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return content.includes('curve:') || content.includes('arc_start:');
+  } catch {
+    return false;
+  }
+}
+
+// Size and mtime seen on the previous poll, keyed by absolute path. A file is
+// only ingested once its size has held steady across two consecutive polls,
+// otherwise a scan still being written gets read half-finished.
+const lastSeen = new Map();
+
+// Files already copied into uploads/, keyed by identity rather than name, so
+// an edited-and-resaved scan is picked up again.
+const ingested = new Set();
+
+function scanWatchFolder(dir) {
+  if (!fs.existsSync(dir)) {
+    return {
+      success: false,
+      exists: false,
+      watchFolder: dir,
+      files: [],
+      ingestedNow: [],
+      message: `Folder not found: ${dir}`,
+    };
+  }
+
+  let stat;
+  try {
+    stat = fs.statSync(dir);
+  } catch (err) {
+    return {
+      success: false,
+      exists: false,
+      watchFolder: dir,
+      files: [],
+      ingestedNow: [],
+      message: `Cannot read folder: ${err.message}`,
+    };
+  }
+
+  if (!stat.isDirectory()) {
+    return {
+      success: false,
+      exists: false,
+      watchFolder: dir,
+      files: [],
+      ingestedNow: [],
+      message: `Not a directory: ${dir}`,
+    };
+  }
+
+  const files = [];
+  const ingestedNow = [];
+
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.toLowerCase().endsWith('.txt')) continue;
+
+    const full = path.join(dir, name);
+    let s;
+    try {
+      s = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (!s.isFile()) continue;
+
+    const feature = isFeatureFile(full);
+    const previous = lastSeen.get(full);
+    const stable = !!previous && previous.size === s.size;
+    lastSeen.set(full, { size: s.size, mtimeMs: s.mtimeMs });
+
+    const identity = `${name}:${s.size}:${s.mtimeMs}`;
+    let status;
+
+    if (!feature) {
+      status = 'Ignored';
+    } else if (!stable) {
+      // Either brand new or still growing — wait for the next poll to confirm.
+      status = 'Writing';
+    } else if (ingested.has(identity)) {
+      status = 'Ingested';
+    } else {
+      try {
+        const dest = path.join(uploadsDir, name);
+        fs.copyFileSync(full, dest);
+        // Carry the source mtime across, so findLatestFeatureFile picks the
+        // genuinely newest scan rather than whichever file copied last.
+        fs.utimesSync(dest, s.atime, s.mtime);
+        ingested.add(identity);
+        ingestedNow.push(name);
+        status = 'Ready';
+      } catch (err) {
+        console.warn(`watch-folder: could not copy ${name}:`, err.message);
+        status = 'Error';
+      }
+    }
+
+    files.push({
+      name,
+      size: s.size,
+      modified: s.mtime.toISOString(),
+      isFeatureFile: feature,
+      status,
+    });
+  }
+
+  files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+
+  const featureCount = files.filter((f) => f.isFeatureFile).length;
+  return {
+    success: true,
+    exists: true,
+    watchFolder: dir,
+    files,
+    ingestedNow,
+    message: `${files.length} file(s), ${featureCount} feature file(s)`,
+  };
+}
+
+// Read the configured watch folder
+router.get('/watch-folder', (req, res) => {
+  const { watchFolder } = readConfig();
+  const resolved = resolveWatchFolder(watchFolder);
+  return res.json({
+    success: true,
+    watchFolder: resolved,
+    configured: watchFolder,
+    exists: fs.existsSync(resolved),
+  });
+});
+
+// Change the configured watch folder
+router.put('/watch-folder', (req, res) => {
+  const { watchFolder } = req.body || {};
+
+  if (typeof watchFolder !== 'string' || !watchFolder.trim()) {
+    return res.status(400).json({ success: false, error: 'watchFolder must be a non-empty string.' });
+  }
+
+  const next = watchFolder.trim();
+  const resolved = resolveWatchFolder(next);
+  const exists = fs.existsSync(resolved);
+
+  try {
+    writeConfig({ ...readConfig(), watchFolder: next });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: `Could not save config: ${err.message}` });
+  }
+
+  // The path is saved either way so it can be set before the folder exists,
+  // but the caller is told the truth about it.
+  return res.json({
+    success: true,
+    watchFolder: resolved,
+    configured: next,
+    exists,
+    message: exists ? 'Watch folder saved.' : `Saved, but the folder does not exist yet: ${resolved}`,
+  });
+});
+
+// Poll the watch folder, copying newly settled feature files into uploads/
+router.post('/scan-watch-folder', (req, res) => {
+  try {
+    const { watchFolder } = readConfig();
+    return res.json(scanWatchFolder(resolveWatchFolder(watchFolder)));
+  } catch (err) {
+    console.error('Scan watch folder error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Ingest files endpoints (Both GET and POST to prevent 404)
 const handleIngest = (req, res) => {
   const uploadedFiles = req.files || [];
