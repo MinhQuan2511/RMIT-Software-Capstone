@@ -3,7 +3,6 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const { exec } = require('child_process');
 const { parseFeatureCurve } = require('../services/parsers/curveParser');
 const { planSeamPath } = require('../services/kinematics/pathPlanner');
 const { generateRapidCode } = require('../services/compiler/rapidCompiler');
@@ -384,37 +383,5 @@ router.post('/parse-map', handlePipeline);
 // Get compiled RAPID code & waypoints unified payload
 router.get('/rapid-code', handlePipeline);
 router.post('/rapid-code', handlePipeline);
-
-// Launch RobotStudio
-router.post('/launch-robotstudio', (req, res) => {
-  try {
-    const { code, fileName = 'Module1.mod' } = req.body || {};
-    if (!code) return res.status(400).json({ success: false, error: 'No RAPID code provided.' });
-
-    const filePath = path.join(uploadsDir, fileName);
-    fs.writeFileSync(filePath, code, 'utf-8');
-
-    const possiblePaths = [
-      `C:\\Program Files (x86)\\ABB\\RobotStudio 2025\\Bin\\RobotStudio.exe`,
-      `C:\\Program Files (x86)\\ABB\\RobotStudio 2026\\Bin\\RobotStudio.exe`,
-      `C:\\Program Files\\ABB\\RobotStudio 2025\\Bin\\RobotStudio.exe`,
-      `C:\\Program Files\\ABB\\RobotStudio 2024\\Bin\\RobotStudio.exe`,
-      `C:\\Program Files (x86)\\ABB\\RobotStudio\\Bin\\RobotStudio.exe`,
-    ];
-
-    const robotStudioExe = possiblePaths.find((p) => fs.existsSync(p));
-
-    if (robotStudioExe) {
-      exec(`"${robotStudioExe}" "${filePath}"`, (err) => {
-        if (err) console.warn('Error executing RobotStudio:', err.message);
-      });
-      return res.json({ success: true, launched: true });
-    }
-
-    return res.json({ success: false, launched: false });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
 
 module.exports = router;
