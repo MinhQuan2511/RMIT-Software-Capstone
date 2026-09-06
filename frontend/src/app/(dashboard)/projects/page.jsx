@@ -15,7 +15,7 @@ export default function ProjectsPage() {
 
   const handleSelectProject = () => {
     resetWorkflowSession();
-    router.push("/bridge-setup");
+    router.push("/acquire");
   };
 
   return (

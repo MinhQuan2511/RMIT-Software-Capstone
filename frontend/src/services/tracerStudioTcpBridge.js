@@ -1,11 +1,13 @@
 /**
- * TracerStudio TCP Bridge Service
- * Connects frontend client to Express backend REST API and TCP Bridge socket endpoints.
+ * TracerStudio Ingestion Service
+ * Connects the frontend client to the Express backend REST API.
+ *
+ * The TCP bridge surface (config, ping, service control, trajectory request)
+ * was removed with the Bridge Setup and Connect pages.
  */
 
 import axiosClient from "./axiosClient";
 
-const STORAGE_KEY_CONFIG = "vd_tcp_bridge_config";
 const STORAGE_KEY_PROGRESS = "vd_tcp_workflow_progress";
 const STORAGE_KEY_PAYLOAD = "vd_tcp_last_payload";
 
@@ -13,189 +15,7 @@ function delay(ms = 300) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// --- Bridge Configuration ---
-
-export function getBridgeConfig() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY_CONFIG);
-    if (stored) return JSON.parse(stored);
-  } catch {
-    // ignore
-  }
-  return {
-    host: "127.0.0.1",
-    port: 7001,
-    transport: "TCP String",
-    timeout: 3000,
-    autoReconnect: true,
-    protocolPreset: "TracerStudio 2.0",
-    messageDelimiter: "CRLF",
-    encoding: "UTF-8",
-    heartbeatInterval: 5,
-    keepalive: true,
-    tracerStudioMode: "Local Workstation",
-    autoLaunchTracerStudio: true,
-    defaultSessionFolder: "C:\\TracerBridge\\Sessions\\",
-    saveDiagnosticLogs: true,
-  };
-}
-
-export async function saveBridgeConfig(config) {
-  await delay(200);
-  try {
-    localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config));
-  } catch {
-    // ignore
-  }
-  return { success: true };
-}
-
-// --- Connection & Health ---
-
-export async function pingEndpoint(config) {
-  try {
-    const res = await axiosClient.get("/bridge/status");
-    if (res.data && res.data.success) {
-      return {
-        success: true,
-        latency: 15,
-        endpoint: `${config.host}:${res.data.bridge.port}`,
-        service: `TracerStudio TCP Server (Active: ${res.data.bridge.activeConnections})`,
-      };
-    }
-  } catch {
-    // fallback simulated ping response
-  }
-  await delay(300);
-  return {
-    success: true,
-    latency: Math.floor(Math.random() * 50) + 20,
-    endpoint: `${config.host}:${config.port}`,
-    service: "TracerStudio Bridge v2.0.1 (Offline Standalone)",
-  };
-}
-
-export async function startService(config) {
-  await delay(400);
-  return {
-    success: true,
-    command: "000,1",
-    message: "Service started successfully",
-  };
-}
-
-export async function stopService(config) {
-  await delay(400);
-  return {
-    success: true,
-    command: "000,0",
-    message: "Service stopped successfully",
-  };
-}
-
-export async function sendTestRequest(config, requestType = "011") {
-  await delay(400);
-  return {
-    success: true,
-    command: requestType,
-    responseCode: "002",
-    payload: {
-      weldType: "Fillet Weld",
-      pathCount: 1,
-      totalPoints: 142,
-      plateThicknessMm: 3.0,
-      weldGapMm: 0.8,
-      pathPoints: generateMockPathPoints(142),
-    },
-  };
-}
-
-export async function requestCapabilities(config) {
-  await delay(350);
-  return {
-    success: true,
-    capabilities: [
-      "002 — Trajectory Response",
-      "011 — Single Trajectory Request",
-      "012 — Fused Trajectory Request",
-      "021 — Program Editor Trajectory",
-      "900 — Success Acknowledgment",
-      "999 — Error Response",
-    ],
-    protocolVersion: "2.0",
-  };
-}
-
-export async function clearSession(config) {
-  await delay(300);
-  return {
-    success: true,
-    message: "Session cleared",
-  };
-}
-
 // --- Acquisition ---
-
-export async function acquireTrajectory(config, options = {}) {
-  const { requestType = "011", templateNumber = "03" } = options;
-  try {
-    const res = await axiosClient.post("/process-pipeline", {
-      torchAngle: 45,
-      approachOffset: 50,
-    });
-
-    if (res.data && res.data.success) {
-      const pipeline = res.data.pipeline;
-      const payload = {
-        source: "tcp",
-        responseCode: "002",
-        requestType,
-        templateNumber,
-        weldType: "Fillet Weld",
-        pathCount: 1,
-        totalPoints: pipeline.totalWaypoints || pipeline.waypoints?.length || 5,
-        plateThicknessMm: 3.0,
-        weldGapMm: 0.8,
-        waypoints: pipeline.waypoints || [],
-        rapidCode: pipeline.rapidCode,
-        timestamp: new Date().toISOString(),
-      };
-
-      try {
-        localStorage.setItem(STORAGE_KEY_PAYLOAD, JSON.stringify(payload));
-      } catch {
-        // ignore
-      }
-
-      return { success: true, responseCode: "002", payload };
-    }
-  } catch (e) {
-    console.warn("Backend process-pipeline error, falling back to simulated payload:", e.message);
-  }
-
-  await delay(800);
-  const payload = {
-    source: "tcp",
-    responseCode: "002",
-    requestType,
-    templateNumber,
-    weldType: "Fillet Weld",
-    pathCount: 1,
-    totalPoints: 142,
-    plateThicknessMm: 3.0,
-    weldGapMm: 0.8,
-    pathPoints: generateMockPathPoints(142),
-    timestamp: new Date().toISOString(),
-  };
-
-  try {
-    localStorage.setItem(STORAGE_KEY_PAYLOAD, JSON.stringify(payload));
-  } catch {
-    // ignore
-  }
-
-  return { success: true, responseCode: "002", payload };
-}
 
 export async function acquireFromFile(filePath) {
   try {
@@ -354,10 +174,9 @@ export function getWorkflowProgress() {
     // ignore
   }
   return {
-    bridgeConfigSaved: false,
-    connectionComplete: false,
     acquisitionComplete: false,
     parseComplete: false,
+    generateComplete: false,
     currentStep: 0,
   };
 }

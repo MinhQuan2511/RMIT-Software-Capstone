@@ -6,14 +6,12 @@ import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
 import { useToast } from "@/components/ToastContext";
 import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
-import { acquireTrajectory } from "@/services/tracerStudioTcpBridge";
 import axiosClient from "@/services/axiosClient";
 
 export default function AcquirePage() {
   const router = useRouter();
   const { showToast } = useToast();
   const {
-    bridgeConfig,
     acquisitionMethod,
     setAcquisition,
     acquisitionQueue,
@@ -22,12 +20,8 @@ export default function AcquirePage() {
     setCanonicalPath,
     updateProgress,
     rawPayload,
-    connectionStatus,
-    workflowMode,
   } = useTcpWorkflow();
 
-  const [requestType, setRequestType] = useState("011 Single Trajectory");
-  const [templateNumber, setTemplateNumber] = useState("03");
   const [watchFolder, setWatchFolder] = useState("C:\\TracerBridge\\Inbound\\");
   const [acquiring, setAcquiring] = useState(false);
   const [acquisitionComplete, setAcquisitionComplete] = useState(false);
@@ -35,29 +29,16 @@ export default function AcquirePage() {
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [activeTab, setActiveTab] = useState("log");
 
-  // Terminal streaming logs simulation
+  // Ingestion log. Real steps only — the fabricated packet traffic went with
+  // the TCP stream it was pretending to describe.
   useEffect(() => {
     if (acquiring) {
-      const logs = [
-        `[${new Date().toLocaleTimeString()}] INITIATING ${acquisitionMethod.toUpperCase()} ACQUISITION...`,
-        `[${new Date().toLocaleTimeString()}] SOCKET CONNECTED: ${bridgeConfig?.ip || "localhost"}:7001`,
-        `[${new Date().toLocaleTimeString()}] SENDING REQUEST: ${requestType}`,
-      ];
-      setTerminalLogs(logs);
-
-      const interval = setInterval(() => {
-        setTerminalLogs((prev) =>
-          [
-            ...prev,
-            `[${new Date().toLocaleTimeString()}] RECEIVING PACKET: ${Math.floor(Math.random() * 1000)} BYTES...`,
-            `[${new Date().toLocaleTimeString()}] DATA BUFFER STATUS: ${Math.floor(Math.random() * 100)}%`,
-          ].slice(-10)
-        );
-      }, 1000);
-
-      return () => clearInterval(interval);
+      setTerminalLogs([
+        `[${new Date().toLocaleTimeString()}] INITIATING ${acquisitionMethod.toUpperCase()} INGESTION...`,
+        `[${new Date().toLocaleTimeString()}] READING FEATURE FILES...`,
+      ]);
     }
-  }, [acquiring, acquisitionMethod, bridgeConfig, requestType]);
+  }, [acquiring, acquisitionMethod]);
 
   useEffect(() => {
     if (acquisitionComplete && rawPayload) {
@@ -104,40 +85,34 @@ export default function AcquirePage() {
     try {
       let resultPayload = null;
 
-      if (acquisitionMethod === "live-tcp") {
-        const [type] = requestType.split(" ");
-        const result = await acquireTrajectory(bridgeConfig, { requestType: type, templateNumber });
-        if (result.success) resultPayload = result.payload;
-      } else {
-        // 1. Upload staged files to Express Backend (/api/ingest-files) if manual import is used
-        if (selectedFiles.length > 0) {
-          const formData = new FormData();
-          selectedFiles.forEach((file) => {
-            formData.append("files", file);
-          });
-          await axiosClient.post("/ingest-files", formData, {
-            headers: { "Content-Type": "multipart/form-data" },
-          });
-        }
+      // 1. Upload staged files to Express Backend (/api/ingest-files) if manual import is used
+      if (selectedFiles.length > 0) {
+        const formData = new FormData();
+        selectedFiles.forEach((file) => {
+          formData.append("files", file);
+        });
+        await axiosClient.post("/ingest-files", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      }
 
-        // 2. Trigger pipeline transformation using newly uploaded files
-        const pipelineRes = await axiosClient.post("/process-pipeline");
-        if (pipelineRes.data && pipelineRes.data.success) {
-          const pipeline = pipelineRes.data.pipeline;
-          resultPayload = {
-            source: pipeline.sourceFile || (acquisitionMethod === "watched-folder" ? "Watched Folder" : "Manual Import"),
-            totalPoints: pipeline.totalWaypoints,
-            waypoints: pipeline.waypoints,
-            timestamp: new Date().toISOString(),
-          };
+      // 2. Trigger pipeline transformation using newly uploaded files
+      const pipelineRes = await axiosClient.post("/process-pipeline");
+      if (pipelineRes.data && pipelineRes.data.success) {
+        const pipeline = pipelineRes.data.pipeline;
+        resultPayload = {
+          source: pipeline.sourceFile || (acquisitionMethod === "watched-folder" ? "Watched Folder" : "Manual Import"),
+          totalPoints: pipeline.totalWaypoints,
+          waypoints: pipeline.waypoints,
+          timestamp: new Date().toISOString(),
+        };
 
-          setCanonicalPath({
-            id: `canonical_${Date.now()}`,
-            source: pipeline.sourceFile || selectedFiles[0]?.name || "Feature.txt",
-            waypoints: pipeline.waypoints,
-            totalWaypoints: pipeline.totalWaypoints,
-          });
-        }
+        setCanonicalPath({
+          id: `canonical_${Date.now()}`,
+          source: pipeline.sourceFile || selectedFiles[0]?.name || "Feature.txt",
+          waypoints: pipeline.waypoints,
+          totalWaypoints: pipeline.totalWaypoints,
+        });
       }
 
       if (resultPayload) {
@@ -195,7 +170,7 @@ export default function AcquirePage() {
       <div className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-3 shrink-0 z-40 overflow-y-auto">
         <div className="px-1 select-none">
           <h2 className="text-xl font-extrabold text-on-surface tracking-tight">Acquisition Method</h2>
-          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">Choose whether weld data is acquired from a live TCP stream or output files.</p>
+          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">Choose whether weld data is picked up from the watched folder or imported by hand.</p>
         </div>
 
         {/* Stepper Progress */}
@@ -213,7 +188,6 @@ export default function AcquirePage() {
             </h3>
             <div className="flex flex-col gap-3">
               {[
-                { value: "live-tcp", label: "Live TCP Stream" },
                 { value: "watched-folder", label: "Watched Folder" },
                 { value: "manual", label: "Manual Import" },
               ].map((m) => (
@@ -226,36 +200,20 @@ export default function AcquirePage() {
           </div>
 
           {/* Configuration Card */}
-          {acquisitionMethod === "live-tcp" ? (
-            <div className="bg-surface border border-outline-variant rounded-xl p-4 relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-              <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
-                <span className="material-symbols-outlined text-[18px] text-primary">tune</span>Stream Configuration
-              </h3>
-              <div className="flex flex-col gap-4">
-                <select value={requestType} onChange={(e) => setRequestType(e.target.value)} className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-semibold">
-                  <option>011 Single Trajectory</option>
-                  <option>012 Fused Trajectory</option>
-                </select>
-                <input type="text" value={templateNumber} readOnly className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono font-semibold" />
+          <div className="bg-surface border border-outline-variant rounded-xl p-4 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
+            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
+              <span className="material-symbols-outlined text-[18px] text-primary">folder_copy</span>File Ingestion
+            </h3>
+            {acquisitionMethod === "watched-folder" ? (
+              <div className="flex gap-2">
+                <input type="text" value={watchFolder} readOnly className="flex-1 bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono" />
+                <button onClick={scanWatchedFolder} className="bg-primary/10 text-primary px-3 py-2 rounded-md font-bold text-xs cursor-pointer">Scan</button>
               </div>
-            </div>
-          ) : (
-            <div className="bg-surface border border-outline-variant rounded-xl p-4 relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-              <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 uppercase tracking-wide">
-                <span className="material-symbols-outlined text-[18px] text-primary">folder_copy</span>File Ingestion
-              </h3>
-              {acquisitionMethod === "watched-folder" ? (
-                <div className="flex gap-2">
-                  <input type="text" value={watchFolder} readOnly className="flex-1 bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono" />
-                  <button onClick={scanWatchedFolder} className="bg-primary/10 text-primary px-3 py-2 rounded-md font-bold text-xs cursor-pointer">Scan</button>
-                </div>
-              ) : (
-                <input type="file" multiple onChange={handleFileSelect} className="w-full text-xs text-on-surface-variant file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-on-primary cursor-pointer" />
-              )}
-            </div>
-          )}
+            ) : (
+              <input type="file" multiple onChange={handleFileSelect} className="w-full text-xs text-on-surface-variant file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-on-primary cursor-pointer" />
+            )}
+          </div>
 
           {/* Acquisition Queue */}
           <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-sm relative overflow-hidden">
@@ -287,7 +245,7 @@ export default function AcquirePage() {
           </button>
 
           <div className="flex gap-4 select-none">
-            <Link href={workflowMode === "file" ? "/bridge-setup" : "/connect"} className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm">
+            <Link href="/projects" className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm">
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>Back
             </Link>
             <button onClick={handleNextStep} className="flex-1 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-4 py-3 rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 shadow-sm cursor-pointer">
@@ -301,17 +259,24 @@ export default function AcquirePage() {
       <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden relative">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: "radial-gradient(#475569 1px, transparent 1px)", backgroundSize: "24px 24px" }}></div>
 
-        {/* 1. Live Stream Metrics */}
+        {/* 1. Ingestion Metrics */}
         <div className="p-6 grid grid-cols-3 gap-5 relative z-10">
           <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-2">
-              <span className="material-symbols-outlined text-blue-400 text-lg">settings_input_component</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${connectionStatus === "connected" ? "bg-green-500/10 text-green-400" : "bg-slate-700 text-slate-400"}`}>
-                {connectionStatus === "connected" ? "CONNECTED" : "IDLE"}
+              <span className="material-symbols-outlined text-blue-400 text-lg">folder_open</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${acquisitionQueue.length > 0 ? "bg-green-500/10 text-green-400" : "bg-slate-700 text-slate-400"}`}>
+                {acquisitionQueue.length > 0 ? "FILES READY" : "IDLE"}
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">TCP Socket</p>
-            <p className="text-xl font-mono font-black text-slate-100">7001</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+              {acquisitionMethod === "watched-folder" ? "Watched Folder" : "Manual Import"}
+            </p>
+            <p
+              className="text-sm font-mono font-bold text-slate-100 truncate"
+              title={acquisitionMethod === "watched-folder" ? watchFolder : "Local file selection"}
+            >
+              {acquisitionMethod === "watched-folder" ? watchFolder : "Local file selection"}
+            </p>
           </div>
 
           <div className="bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl">
@@ -330,8 +295,8 @@ export default function AcquirePage() {
               <span className="material-symbols-outlined text-blue-400 text-lg">quick_reference_all</span>
               <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold">READY</span>
             </div>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Incoming Packet</p>
-            <p className="text-sm font-mono font-bold text-slate-100 truncate">{acquisitionMethod === "live-tcp" ? "tcp_stream_packet.bin" : selectedFiles[0]?.name || "Feature.txt"}</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Incoming File</p>
+            <p className="text-sm font-mono font-bold text-slate-100 truncate">{selectedFiles[0]?.name || acquisitionQueue[0]?.item || "Feature.txt"}</p>
           </div>
         </div>
 
@@ -342,7 +307,7 @@ export default function AcquirePage() {
             <div className={`flex flex-col items-center gap-3 transition-all duration-500 ${acquiring ? "scale-110" : ""}`}>
               <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 shadow-2xl transition-all duration-500 ${acquiring ? "bg-blue-500 border-blue-400 animate-pulse" : "bg-slate-900 border-slate-700"}`}>
                 <span className="material-symbols-outlined text-3xl text-white">
-                  {acquisitionMethod === "live-tcp" ? "sensors" : "upload_file"}
+                  {acquisitionMethod === "watched-folder" ? "folder_open" : "upload_file"}
                 </span>
               </div>
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Source Inbound</span>
@@ -360,7 +325,7 @@ export default function AcquirePage() {
                   <span className={`material-symbols-outlined text-2xl ${acquiring ? "text-blue-400" : "text-slate-500"}`}>hub</span>
                 </div>
               </div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">TCP Bridge 7001</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Ingest Pipeline</span>
             </div>
 
             {/* Connecting Line 2 */}

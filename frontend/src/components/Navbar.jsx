@@ -1,83 +1,20 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthContext";
-import { useTcpWorkflow } from "./TcpWorkflowContext";
 import { useIntegrationMode } from "./IntegrationModeContext";
 
 export default function Navbar() {
   const { user, logout, isAuthenticated } = useAuth();
-  const { connectionStatus } = useTcpWorkflow();
   const { mode, setMode } = useIntegrationMode();
   const pathname = usePathname();
-
-  const [isIdleDueToInactivity, setIsIdleDueToInactivity] = useState(false);
-  const timerRef = useRef(null);
-
-  // 3-minute inactivity timer to return TracerStudio Bridge status to Idle if no user action
-  useEffect(() => {
-    if (!isAuthenticated || pathname === "/login") {
-      setIsIdleDueToInactivity(false);
-      return;
-    }
-
-    const THREE_MINUTES = 3 * 60 * 1000; // 3 minutes
-
-    const resetInactivityTimer = () => {
-      setIsIdleDueToInactivity(false);
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        setIsIdleDueToInactivity(true);
-      }, THREE_MINUTES);
-    };
-
-    resetInactivityTimer();
-
-    const activityEvents = ["mousemove", "keydown", "click", "scroll", "touchstart"];
-    activityEvents.forEach((evt) => {
-      window.addEventListener(evt, resetInactivityTimer, { passive: true });
-    });
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      activityEvents.forEach((evt) => {
-        window.removeEventListener(evt, resetInactivityTimer);
-      });
-    };
-  }, [isAuthenticated, pathname]);
 
   // Hide Navbar completely on Login Page or when user is not authenticated
   if (!isAuthenticated || pathname === "/login") return null;
 
-  // Determine TracerStudio badge display
-  // When logged in, default is Online (green dot) unless 3 mins of inactivity pass -> Idle (gray dot)
-  const isOnline = !isIdleDueToInactivity;
-
-  let tracerBadge;
-  if (isOnline) {
-    tracerBadge = {
-      label: "TracerStudio Bridge",
-      status: "Online (Port 7001)",
-      color: "green",
-    };
-  } else {
-    tracerBadge = {
-      label: "TracerStudio Bridge",
-      status: "Idle",
-      color: "gray",
-    };
-  }
-
   const isTestingMode = mode === "testing";
-
-  const statusDotColor = tracerBadge.color === "green"
-    ? "bg-green-500"
-    : tracerBadge.color === "amber"
-    ? "bg-amber-500"
-    : "bg-gray-400";
-
 
   return (
     <header className="bg-surface flex justify-between items-center w-full px-margin-desktop h-16 border-b border-outline-variant shrink-0 z-50 sticky top-0">
@@ -109,14 +46,6 @@ export default function Navbar() {
           <div className={`w-1.5 h-1.5 rounded-full ${isTestingMode ? "bg-white animate-pulse" : "bg-on-surface-variant/40"}`}></div>
           Testing: {isTestingMode ? "Active" : "Inactive"}
         </button>
-
-        {/* Status Badges */}
-        <div className="hidden lg:flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-container-high border border-outline-variant text-[11px] font-semibold">
-            <div className={`w-2 h-2 rounded-full ${statusDotColor} glowing-badge`}></div>
-            <span className="font-label-md text-on-surface">{tracerBadge.label}: {tracerBadge.status}</span>
-          </div>
-        </div>
 
         {/* Quick action icons */}
         <div className="flex items-center gap-2 text-primary">

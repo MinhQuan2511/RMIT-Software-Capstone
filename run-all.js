@@ -28,8 +28,8 @@ const freePort = (port) => {
   }
 };
 
-// Clear ports 5000 (Backend HTTP), 7001 (Backend TCP Bridge), and 3000 (Frontend Next.js)
-[5000, 7001, 3000].forEach(freePort);
+// Clear ports 5000 (Backend HTTP) and 3000 (Frontend Next.js)
+[5000, 3000].forEach(freePort);
 
 // Use 'run dev' for backend to enable native 'node --watch' auto-reloading
 const backend = spawn('npm', ['--prefix', 'backend', 'run', 'dev'], { stdio: 'inherit', shell: true });

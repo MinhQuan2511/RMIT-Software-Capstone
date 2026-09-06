@@ -42,22 +42,12 @@ export const WORKFLOWS = {
     ],
   },
   tcp: {
-    label: "TracerStudio: TCP",
+    label: "TracerStudio: Scan-to-Path",
     steps: [
       {
         path: "/projects",
         label: "Project",
         icon: "folder",
-      },
-      {
-        path: "/bridge-setup",
-        label: "Bridge Setup",
-        icon: "link",
-      },
-      {
-        path: "/connect",
-        label: "Connect",
-        icon: "cable",
       },
       {
         path: "/acquire",
@@ -113,7 +103,7 @@ export const WORKFLOWS = {
  */
 export const VALID_ROUTES = {
   api: new Set(["/projects", "/calibrate", "/configure", "/preview", "/generate", "/export"]),
-  tcp: new Set(["/projects", "/bridge-setup", "/connect", "/acquire", "/parse-map", "/generate", "/export"]),
+  tcp: new Set(["/projects", "/acquire", "/parse-map", "/generate", "/export"]),
   testing: new Set(["/testing-upload", "/testing-preview", "/generate", "/export"]),
 };
 
