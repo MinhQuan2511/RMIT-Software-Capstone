@@ -11,7 +11,15 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
  * Dynamically builds the T-joint CAD mesh directly from Target_40 (P_start)
  * and Target_20_5 (P_end) in authentic millimeter-scale coordinates.
  */
-export default function WeldSimulation3D({ points = [], isPlaying = false, progressRatio = 0 }) {
+export default function WeldSimulation3D({
+  points = [],
+  isPlaying = false,
+  progressRatio = 0,
+  // Points sampled along a fitted weld arc, in robot coordinates. Supplied by
+  // the backend for a curved seam and absent for a straight one, in which case
+  // the seam is drawn as the straight line between weld start and weld end.
+  arcPoints = null,
+}) {
   const mountRef = useRef(null);
   const torchRef = useRef(null);
   const arcLightRef = useRef(null);
@@ -125,6 +133,26 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
       uWidth.crossVectors(uSeam, uTrueUp).normalize();
     }
 
+    // 1b. Seam Curve — the path the torch actually welds along.
+    // A straight seam is the chord from weld start to weld end. A curved seam
+    // follows the arc the backend fitted and sampled, so the bead and the torch
+    // both track the real geometry rather than cutting the corner.
+    const arcVecs = Array.isArray(arcPoints) && arcPoints.length >= 3
+      ? arcPoints.map(toVec)
+      : null;
+
+    const seamCurve = arcVecs
+      ? new THREE.CatmullRomCurve3(arcVecs, false, "centripetal", 0)
+      : new THREE.LineCurve3(P_start.clone(), P_end.clone());
+
+    const isCurvedSeam = Boolean(arcVecs);
+    // Tube segments: enough to look smooth on a curve. A straight seam needs no
+    // segments for its shape, but the bead is revealed one segment at a time, so
+    // it still needs plenty of them for the weld to grow smoothly rather than
+    // appearing in visible jumps.
+    const SEAM_SEGMENTS = isCurvedSeam ? 96 : 64;
+    const SEAM_RADIAL_SEGMENTS = 16;
+
     // 2. Synthesize Collision-Free 3D Waypoints (Pushed into +uWidth open space)
     const P_approach = P_start.clone()
       .addScaledVector(uSeam, -25)      // 25mm behind start
@@ -200,8 +228,17 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
     );
     webMesh.add(webEdges);
 
-    // Active Seam: At (Z = 0, Y = 0)
-    const unweldedGeo = new THREE.CylinderGeometry(3.5, 3.5, L, 16);
+    scene.add(tJointGroup);
+
+    // Active Seam: a tube swept along the seam curve, in world space so a
+    // curved seam is not forced to lie along the straight T-joint axis.
+    const unweldedGeo = new THREE.TubeGeometry(
+      seamCurve,
+      SEAM_SEGMENTS,
+      3.5,
+      SEAM_RADIAL_SEGMENTS,
+      false
+    );
     const unweldedMat = new THREE.MeshStandardMaterial({
       color: 0x00d2ff,
       emissive: 0x0077aa,
@@ -209,11 +246,7 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
       roughness: 0.2,
     });
     const unweldedMesh = new THREE.Mesh(unweldedGeo, unweldedMat);
-    unweldedMesh.rotation.z = Math.PI / 2;
-    unweldedMesh.position.set(0, 0, 0);
-    tJointGroup.add(unweldedMesh);
-
-    scene.add(tJointGroup);
+    scene.add(unweldedMesh);
 
     // 7. Motion Trajectory Dashed Lines
     const createDashedLine = (p1, p2, color = 0x64748b, dashSize = 12, gapSize = 8) => {
@@ -228,8 +261,22 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
     scene.add(createDashedLine(P_end, P_retract, 0xa855f7, 10, 6));
     scene.add(createDashedLine(P_retract, P_home, 0x64748b, 14, 8));
 
-    // 8. Dynamic Welded Bead Cylinder (Hot molten bead growth in World Space)
-    const weldedGeo = new THREE.CylinderGeometry(4.8, 4.8, 1, 16);
+    // 8. Dynamic Welded Bead (Hot molten bead growth in World Space)
+    // The bead is the same swept tube as the seam, built once at full length.
+    // A tube cannot be grown by scaling the way a cylinder could — scaling it
+    // would stretch the whole curve rather than extend it — so the finished
+    // geometry is revealed a segment at a time with setDrawRange instead.
+    const weldedGeo = new THREE.TubeGeometry(
+      seamCurve,
+      SEAM_SEGMENTS,
+      4.8,
+      SEAM_RADIAL_SEGMENTS,
+      false
+    );
+    // Indices are emitted in order along the tube: six per radial face, one
+    // ring of faces per tubular segment. That ordering is what makes a draw
+    // range correspond to a prefix of the weld.
+    const INDICES_PER_SEAM_SEGMENT = SEAM_RADIAL_SEGMENTS * 6;
     const weldedMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       emissive: 0xf1f5f9,
@@ -399,7 +446,6 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
       if (torchRef.current && waypointsRef.current.home) {
         const { home, approach, weldStart, weldEnd, retract } = waypointsRef.current;
         let targetPos = new THREE.Vector3();
-        let currentWeldTip = weldStart.clone();
         let targetQuat = new THREE.Quaternion();
 
         if (p < 0.15) {
@@ -407,46 +453,50 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
           const frac = p / 0.15;
           targetPos.lerpVectors(home, approach, frac);
           targetQuat.copy(quatStandby).slerp(quatWeld45, frac * 0.4);
-          currentWeldTip.copy(weldStart);
         } else if (p < 0.25) {
           // Phase 2: Target_30 -> Target_40 (Weld Start)
           const frac = (p - 0.15) / 0.10;
           targetPos.lerpVectors(approach, weldStart, frac);
           targetQuat.copy(quatStandby).slerp(quatWeld45, 0.4 + frac * 0.6);
-          currentWeldTip.copy(weldStart);
         } else if (p <= 0.75) {
           // Phase 3: Target_40 -> Target_20_5 (Weld Along Root Corner)
+          // Sample the seam curve so the torch follows a curved seam round its
+          // arc instead of cutting straight across the chord.
           const frac = (p - 0.25) / 0.50;
-          targetPos.lerpVectors(weldStart, weldEnd, frac);
+          targetPos.copy(seamCurve.getPointAt(Math.min(Math.max(frac, 0), 1)));
           targetQuat.copy(quatWeld45);
-          currentWeldTip.copy(targetPos);
         } else if (p < 0.85) {
           // Phase 4: Target_20_5 -> Target_20 (Retract Lift)
           const frac = (p - 0.75) / 0.10;
           targetPos.lerpVectors(weldEnd, retract, frac);
           targetQuat.copy(quatWeld45);
-          currentWeldTip.copy(weldEnd);
         } else {
           // Phase 5: Target_20 -> Home
           const frac = (p - 0.85) / 0.15;
           targetPos.lerpVectors(retract, home, frac);
           targetQuat.copy(quatWeld45).slerp(quatStandby, frac);
-          currentWeldTip.copy(weldEnd);
         }
 
         torchRef.current.position.copy(targetPos);
         torchRef.current.quaternion.copy(targetQuat);
 
-        // Dynamic Welded Bead Growth
+        // Dynamic Welded Bead Growth — reveal the finished tube progressively.
         if (weldedMeshRef.current) {
-          const currentLen = weldStart.distanceTo(currentWeldTip);
-          if (currentLen > 1.0 && p >= 0.25) {
+          // How much of the seam has been welded: nothing before the torch
+          // reaches the weld start, all of it once it leaves the weld end.
+          let weldFraction;
+          if (p < 0.25) weldFraction = 0;
+          else if (p > 0.75) weldFraction = 1;
+          else weldFraction = (p - 0.25) / 0.50;
+
+          const segmentsWelded = Math.floor(weldFraction * SEAM_SEGMENTS);
+
+          if (segmentsWelded > 0) {
             weldedMeshRef.current.visible = true;
-            weldedMeshRef.current.scale.set(1, currentLen, 1);
-            const midPos = new THREE.Vector3().addVectors(weldStart, currentWeldTip).multiplyScalar(0.5);
-            weldedMeshRef.current.position.copy(midPos);
-            const cylDir = new THREE.Vector3().subVectors(currentWeldTip, weldStart).normalize();
-            weldedMeshRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cylDir);
+            weldedMeshRef.current.geometry.setDrawRange(
+              0,
+              segmentsWelded * INDICES_PER_SEAM_SEGMENT
+            );
           } else {
             weldedMeshRef.current.visible = false;
           }
@@ -520,7 +570,7 @@ export default function WeldSimulation3D({ points = [], isPlaying = false, progr
         container.removeChild(renderer.domElement);
       }
     };
-  }, [points]);
+  }, [points, arcPoints]);
 
   if (!points || points.length === 0) {
     return (

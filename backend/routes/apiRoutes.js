@@ -5,8 +5,9 @@ const path = require('path');
 const multer = require('multer');
 const { exec } = require('child_process');
 const { parseFeatureCurve } = require('../services/parsers/curveParser');
-const { planWaypoints } = require('../services/kinematics/pathPlanner');
+const { planSeamPath } = require('../services/kinematics/pathPlanner');
 const { generateRapidCode } = require('../services/compiler/rapidCompiler');
+const { sampleArc } = require('../services/kinematics/arcFitter');
 
 const uploadsDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -33,7 +34,8 @@ function findLatestFeatureFile(dir) {
 
   for (const file of txtFiles) {
     const content = fs.readFileSync(file.path, 'utf-8');
-    if (content.includes('curve:')) return file.path;
+    // An arc feature file carries labelled keys and no curve: line at all.
+    if (content.includes('curve:') || content.includes('arc_start:')) return file.path;
   }
   return null;
 }
@@ -74,13 +76,17 @@ const handlePipeline = (req, res) => {
     }
 
     // --- Step 2: Plan waypoints (no matrix transform needed) ---
-    const waypoints = planWaypoints(seam);
+    const plan = planSeamPath(seam);
+    const waypoints = plan.waypoints;
 
     // Calculate physical feature metrics
     const dx = seam.endPoint.x - seam.startPoint.x;
     const dy = seam.endPoint.y - seam.startPoint.y;
     const dz = seam.endPoint.z - seam.startPoint.z;
-    const seamLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const chordLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    // An arc is measured along the curve; the chord would understate the weld
+    // by however much the seam bows.
+    const seamLength = plan.isArc ? plan.arc.arcLength : chordLength;
     const seamGapWidth = Math.abs(seam.seamWidth || 5.54);
 
     const featureData = {
@@ -105,6 +111,10 @@ const handlePipeline = (req, res) => {
     }));
 
     // --- Step 3: Generate RAPID code ---
+    // The viewport needs a point list to build a curved mesh; RAPID does not,
+    // because MoveC interpolates the arc on the controller itself.
+    const arcPoints = plan.isArc ? sampleArc(plan.arc, 48) : null;
+
     const rapidCode = generateRapidCode(waypoints);
     fs.writeFileSync(path.join(uploadsDir, 'latest_rapid.mod'), rapidCode, 'utf-8');
 
@@ -113,6 +123,22 @@ const handlePipeline = (req, res) => {
       rapidCode,
       featureData,
       seam,
+      isArc: plan.isArc,
+      arc: plan.isArc
+        ? {
+            center: plan.arc.center,
+            radius: parseFloat(plan.arc.radius.toFixed(4)),
+            normal: plan.arc.normal,
+            sweepAngle: plan.arc.sweepAngle,
+            sweepDegrees: parseFloat(((plan.arc.sweepAngle * 180) / Math.PI).toFixed(3)),
+            bow: parseFloat(plan.arc.bow.toFixed(4)),
+            arcLength: parseFloat(plan.arc.arcLength.toFixed(3)),
+          }
+        : null,
+      arcPoints,
+      // Non-null when an arc was requested but could not be fitted, so the
+      // UI can say why it is showing a straight seam.
+      warning: plan.fallbackReason,
       waypoints: formattedWaypoints,
       pipeline: {
         sourceFile: featurePath ? path.basename(featurePath) : 'Default_Fallback',

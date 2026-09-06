@@ -1,0 +1,9 @@
+# Feature_Straight_Sample.txt — flat workpiece, legacy straight seam
+#
+# The original single-line format, kept as the regression check for the arc
+# work: this file must keep producing the byte-identical RAPID module it
+# always has.
+#
+# curve:x1,y1,z1,x2,y2,z2,width
+
+curve:414.69,1112.75,320.342,338.531,1333.74,322.068,5.54

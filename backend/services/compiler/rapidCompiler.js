@@ -10,9 +10,24 @@
  *     PROC Path_10()  →  ConfJ/ConfL Off, MoveL sequence with tWeldGun\WObj:=wobj0
  *   ENDMODULE
  *
- * Speed and zone values are read from each waypoint's `speed` and `zone`
- * fields so the compiler adapts automatically to upstream path-planner output.
+ * The Path_10 motion sequence is derived from the waypoint array rather than
+ * hard-coded: declarations follow the array order, and each move reads the
+ * `speed` and `zone` fields of its own waypoint. A straight seam therefore
+ * still produces the byte-identical template it always did, while an arc seam
+ * can insert an extra target without the compiler needing to know about it.
+ *
+ * Arc support: a waypoint of type 'weld_via' is not emitted as a move of its
+ * own — it is consumed as the interpolation point of the MoveC that carries
+ * the following waypoint. Everything else is a MoveL.
  */
+
+// Tool and work object are fixed by the verified RobotStudio station.
+const TOOL_SUFFIX = 'tWeldGun\\WObj:=wobj0';
+
+// The return-to-home move closing Path_10 is a constant of the template —
+// it is deliberately not the home waypoint's own zone (which is z100).
+const RETURN_HOME_SPEED = 'v100';
+const RETURN_HOME_ZONE = 'fine';
 
 /**
  * Formats a single numeric value for RAPID output.
@@ -45,6 +60,50 @@ function buildRobtarget(name, pos, orient, conf) {
 }
 
 /**
+ * Builds the body of PROC Path_10 from the waypoint array.
+ *
+ * @param {object}   homeWP    - The 'home' waypoint
+ * @param {object[]} targetWPs - Motion waypoints, in execution order
+ * @returns {string[]} RAPID motion statement lines
+ */
+function buildMotionSequence(homeWP, targetWPs) {
+  const lines = [];
+
+  // Approach the standby pose with a joint move, as the verified template does.
+  lines.push(
+    `        MoveJ ${homeWP.name}, ${homeWP.speed || 'v100'}, ${homeWP.zone || 'z100'}, ${TOOL_SUFFIX};`
+  );
+
+  for (let i = 0; i < targetWPs.length; i += 1) {
+    const wp = targetWPs[i];
+
+    // A via point carries no move of its own — the next MoveC consumes it.
+    if (wp.type === 'weld_via') continue;
+
+    const speed = wp.speed || 'v100';
+    const zone = wp.zone || 'fine';
+    const prev = i > 0 ? targetWPs[i - 1] : null;
+
+    if (prev && prev.type === 'weld_via') {
+      lines.push(
+        `        MoveC ${prev.name}, ${wp.name}, ${speed}, ${zone}, ${TOOL_SUFFIX};`
+      );
+    } else {
+      lines.push(
+        `        MoveL ${wp.name}, ${speed}, ${zone}, ${TOOL_SUFFIX};`
+      );
+    }
+  }
+
+  // Close the path by returning to standby.
+  lines.push(
+    `        MoveL ${homeWP.name}, ${RETURN_HOME_SPEED}, ${RETURN_HOME_ZONE}, ${TOOL_SUFFIX};`
+  );
+
+  return lines;
+}
+
+/**
  * Generates a complete ABB RAPID module from an array of waypoints.
  * Each waypoint may carry `speed` and `zone` fields; defaults are applied
  * when those fields are absent for backwards compatibility.
@@ -72,16 +131,11 @@ function generateRapidCode(waypoints) {
   // --- Module header ---
   lines.push('MODULE Module1');
 
-  // --- Robtarget declarations (home first, then targets in template order) ---
+  // --- Robtarget declarations (home first, then targets in planner order) ---
   lines.push(buildRobtarget(homeWP.name, homeWP.pos, homeWP.orient, homeWP.conf));
 
-  // Emit targets in the verified template order: Target_30, Target_40, Target_20_5, Target_20
-  const templateOrder = ['Target_30', 'Target_40', 'Target_20_5', 'Target_20'];
-  for (const tName of templateOrder) {
-    const wp = targetWPs.find((w) => w.name === tName);
-    if (wp) {
-      lines.push(buildRobtarget(wp.name, wp.pos, wp.orient, wp.conf));
-    }
+  for (const wp of targetWPs) {
+    lines.push(buildRobtarget(wp.name, wp.pos, wp.orient, wp.conf));
   }
 
   // --- Module description comment block (verified template) ---
@@ -99,15 +153,10 @@ function generateRapidCode(waypoints) {
   lines.push('        Path_10;');
   lines.push('    ENDPROC');
 
-  // --- PROC Path_10() (verified RAPID template) ---
+  // --- PROC Path_10() (derived from the waypoint array) ---
   lines.push('');
   lines.push('    PROC Path_10()');
-  lines.push('        MoveJ home, v100, z100, tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_30, v60, z10, tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_40, v100, fine, tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_20_5, v100, fine, tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL Target_20, v80, z10, tWeldGun\\WObj:=wobj0;');
-  lines.push('        MoveL home, v100, fine, tWeldGun\\WObj:=wobj0;');
+  lines.push(...buildMotionSequence(homeWP, targetWPs));
   lines.push('    ENDPROC');
   lines.push('ENDMODULE');
 

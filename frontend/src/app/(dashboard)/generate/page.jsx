@@ -222,7 +222,12 @@ export default function GeneratePage() {
 
         {/* Realtime 3D Simulation Canvas */}
         <div className="w-full h-full relative flex-1">
-          <WeldSimulation3D points={activePoints} isPlaying={isPlaying} progressRatio={progressRatio} />
+          <WeldSimulation3D
+            points={activePoints}
+            arcPoints={backendData?.arcPoints || null}
+            isPlaying={isPlaying}
+            progressRatio={progressRatio}
+          />
         </div>
 
           {/* Floating Bottom Control Bar */}
