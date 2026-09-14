@@ -49,3 +49,6 @@ watch-inbox/
 # test and benchmark scratch output
 /test-results/
 /playwright-report/
+
+# local-only working documents
+/LocalUse/
