@@ -1,44 +1,36 @@
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/inter/700.css";
+import "@fontsource/inter/800.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "material-symbols/outlined.css";
 import "./globals.css";
-import { AuthProvider } from "@/components/AuthContext";
 import { ToastProvider } from "@/components/ToastContext";
-import { IntegrationModeProvider } from "@/components/IntegrationModeContext";
+import { WorkflowSessionProvider } from "@/components/WorkflowSessionContext";
 import Navbar from "@/components/Navbar";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Vertex Dynamics: Scan-to-Path Hub",
-  description: "Next-Generation 3D Vision & Industrial Robot Integration. RMIT University Capstone 2026.",
+  description:
+    "Local single-operator tool: seam descriptor import, validation, and candidate motion-only ABB RAPID generation for manual RobotStudio validation. RMIT University Capstone 2026.",
 };
 
+// Fonts and icons are bundled from npm packages and served locally, so the
+// interface works without internet access.
 export default function RootLayout({ children }) {
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
-      <head>
-        {/* Load Material Symbols directly in the head */}
-        <link 
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" 
-          rel="stylesheet"
-        />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link 
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" 
-          rel="stylesheet" 
-          />
-      </head>
       <body className="bg-background text-on-background antialiased overflow-hidden h-screen w-screen flex flex-col" suppressHydrationWarning>
-        <AuthProvider>
-          <IntegrationModeProvider>
-            <ToastProvider>
-              {/* Global Navbar appears on authenticated views */}
-              <Navbar />
-              <div className="flex-1 flex overflow-hidden w-full h-full relative">
-                {children}
-              </div>
-            </ToastProvider>
-          </IntegrationModeProvider>
-        </AuthProvider>
+        <WorkflowSessionProvider>
+          <ToastProvider>
+            <Navbar />
+            <div className="flex-1 flex overflow-hidden w-full h-full relative">{children}</div>
+          </ToastProvider>
+        </WorkflowSessionProvider>
       </body>
     </html>
   );

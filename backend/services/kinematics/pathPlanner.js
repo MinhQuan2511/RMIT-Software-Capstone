@@ -1,318 +1,339 @@
 /**
- * Path Planner & Waypoint Generation Service
- * Turns a parsed weld seam into the RAPID waypoint set the compiler emits.
+ * Path Planner
+ * Turns a parsed seam into canonical waypoints and ordered motion segments.
  *
- * Feature.txt coordinates are already in the physical robot workspace, so the
- * weld start and weld end are used directly — there is no camera-to-robot
- * transform and no scaling of the seam onto a fixed table anchor. The approach,
- * retract and standby poses are derived from the seam itself: backed off along
- * the seam direction, lifted in Z, and pushed sideways along the lateral normal
- * so the torch escapes into open space rather than through the workpiece.
+ * Coordinates are used as given (robot base frame, millimetres, pre-calibrated by
+ * assumption). Approach, retract and standby poses are a fixed clearance
+ * heuristic derived from the seam; nothing here checks collisions, joint limits,
+ * singularities or reachability.
  *
- * Straight seam — five waypoints:
- *   1. home        – High-clearance overhead standby
- *   2. Target_30   – Approach: backed off behind the weld start
- *   3. Target_40   – Weld Start
- *   4. Target_20_5 – Weld End
- *   5. Target_20   – Retract: lifted clear of the weld end
+ * Offset convention (unchanged from the previous template, now explicit):
+ *   approach = start − backoff·[tx, ty, 0] + lateral·w + [0, 0, lift]
+ *   retract  = end   + forward·[tx, ty, 0] + lateral·w + [0, 0, lift]
+ *   home     = chordMid + homeLateral·w_mid + [0, 0, maxWeldZ + homeLift − chordMid.z]
+ * where t is the 3D unit travel tangent (its XY components only are used, so a
+ * sloped seam gets a proportionally shorter back-off), w is t turned +90° about
+ * Z in the XY plane and normalised (left of travel seen from above), and maxWeldZ
+ * is the highest Z of the weld geometry (the arc's true maximum for curves).
  *
- * Arc seam — six waypoints, one extra between the weld ends:
- *   1. home
- *   2. Target_30   – Approach, backed off along the start tangent
- *   3. Target_40   – Weld Start
- *   4. Target_45   – Weld Via: the interpolation point of the MoveC
- *   5. Target_20_5 – Weld End
- *   6. Target_20   – Retract, lifted clear along the end tangent
- *
- * Orientation. A straight seam keeps the single fixed weld quaternion that the
- * known-good RobotStudio run was verified with. An arc cannot: the seam tangent
- * turns by the whole sweep angle, so holding one quaternion would leave the
- * torch pointing where the seam no longer goes. Arc waypoints therefore carry
- * the weld quaternion rotated about the arc's own plane normal by how far round
- * the arc they sit — the torch holds a constant attitude relative to the seam,
- * and at the start of the arc the orientation is still exactly the verified
- * quaternion.
+ * Straight seam: home, Target_30, Target_40, Target_20_5, Target_20 (5 targets).
+ * Arc seam adds Target_45, the MoveC via target (6 targets). Both produce six
+ * motion instructions including the closing return to home.
  */
 
-const { fitCircle3Pt } = require('./arcFitter');
+const { fitCircle3Pt, sampleArc, pointOnArc, tangentOnArc } = require('./arcFitter');
+const { diagnostic, hasErrors } = require('../util/errors');
+const {
+  normalizeQuaternion, quatMultiply, quatFromAxisAngle, roundQuaternion, quatNorm,
+} = require('../validation/quaternion');
 
-/**
- * @typedef {Object} RobotWaypoint
- * @property {string}   id     - Unique waypoint identifier
- * @property {string}   name   - RAPID robtarget variable name
- * @property {number[]} pos    - [x, y, z]
- * @property {number[]} orient - [q1, q2, q3, q4]
- * @property {number[]} conf   - [cf1, cf4, cf6, cfx]
- * @property {string}   type   - 'home' | 'approach' | 'weld_start' | 'weld_via' | 'weld_end' | 'retract'
- * @property {string}   speed  - RAPID speed data (e.g. 'v100')
- * @property {string}   zone   - RAPID zone data (e.g. 'fine', 'z100')
- */
+const TARGETS = Object.freeze({
+  home: 'home', approach: 'Target_30', weldStart: 'Target_40', weldVia: 'Target_45', weldEnd: 'Target_20_5', retract: 'Target_20',
+});
 
-// --- Orientations ---
-// 1. Default upright quaternion for home & Target_20
-const UPRIGHT_QUAT = [0, 0.38268343, 0.92387953, 0];
+const OFFSET_CONVENTION =
+  'XY components of the 3D unit travel tangent scaled by the back-off/forward distance; lateral offset along the ' +
+  'tangent turned +90° about Z in the XY plane; scalar Z lift. Not collision-checked.';
 
-// 2. 45-degree fillet weld quaternion for Target_30, Target_40, Target_20_5
-const WELD_QUAT = [0.38268343, 0.14943801, 0.88701083, -0.19826693];
+const round4 = (n) => { const r = parseFloat(n.toFixed(4)); return Object.is(r, -0) ? 0 : r; };
+const vec = (p) => [p.x, p.y, p.z];
+const toPoint = (v) => ({ x: v[0], y: v[1], z: v[2] });
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const len = (v) => Math.hypot(v[0], v[1], v[2]);
+const unit = (v) => { const l = len(v); return [v[0] / l, v[1] / l, v[2] / l]; };
+const deg = (r) => (r * 180) / Math.PI;
 
-const round4 = (n) => parseFloat(n.toFixed(4));
-
-/** Reads a point given as {x,y,z} or [x,y,z] into a numeric triple. */
-function readPoint(p) {
-  if (Array.isArray(p)) return [Number(p[0]) || 0, Number(p[1]) || 0, Number(p[2]) || 0];
-  return [
-    Number(p && p.x !== undefined ? p.x : 0),
-    Number(p && p.y !== undefined ? p.y : 0),
-    Number(p && p.z !== undefined ? p.z : 0),
-  ];
+/** Left-hand lateral in the XY plane, or null when the tangent is (near) vertical. */
+function lateralNormal(dir, minHorizontal) {
+  const h = Math.hypot(dir[0], dir[1]);
+  return h >= minHorizontal ? [-dir[1] / h, dir[0] / h, 0] : null;
 }
 
-/** Unit vector, with a safe fallback for a zero-length input. */
-function unit(v, fallback = [1, 0, 0]) {
-  const len = Math.hypot(v[0], v[1], v[2]);
-  return len > 0.001 ? [v[0] / len, v[1] / len, v[2] / len] : fallback.slice();
+function outputQuaternion(q) {
+  return roundQuaternion(normalizeQuaternion(q), 9).q;
 }
 
-/** Cross product of two triples. */
-function cross(a, b) {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
-
-/**
- * Lateral escape direction: the travel direction turned 90 degrees in the XY
- * plane, so approach and retract clear the workpiece sideways.
- */
-function lateralNormal(dir) {
-  const wx = -dir[1];
-  const wy = dir[0];
-  const len = Math.hypot(wx, wy);
-  return len > 0.001 ? [wx / len, wy / len, 0] : [0, 1, 0];
-}
-
-/**
- * Hamilton product of two quaternions in ABB's [q1,q2,q3,q4] = [w,x,y,z] order.
- * The left operand is the rotation applied after the right one.
- */
-function quatMultiply(a, b) {
-  const [aw, ax, ay, az] = a;
-  const [bw, bx, by, bz] = b;
-  return [
-    aw * bw - ax * bx - ay * by - az * bz,
-    aw * bx + ax * bw + ay * bz - az * by,
-    aw * by - ax * bz + ay * bw + az * bx,
-    aw * bz + ax * by - ay * bx + az * bw,
-  ];
-}
-
-/** Unit quaternion for a rotation of `angle` radians about `axis`. */
-function quatFromAxisAngle(axis, angle) {
-  const [x, y, z] = unit(axis, [0, 0, 1]);
-  const half = angle / 2;
-  const s = Math.sin(half);
-  return [Math.cos(half), x * s, y * s, z * s];
-}
-
-/**
- * Rotates the verified weld quaternion round the arc so the torch keeps a
- * constant attitude relative to the turning seam.
- *
- * The rotation quaternion is a unit quaternion, so the product carries the same
- * magnitude as WELD_QUAT — no renormalisation is applied, and an angle of zero
- * reproduces WELD_QUAT exactly rather than a rounded copy of it.
- */
-function weldQuatAlongArc(normal, angle) {
-  if (!angle) return WELD_QUAT.slice();
-  return quatMultiply(quatFromAxisAngle(normal, angle), WELD_QUAT);
-}
-
-/**
- * Builds the three framing poses (approach, retract, standby) around a seam.
- *
- * @param {number[]} pStart   - Weld start [x,y,z]
- * @param {number[]} pEnd     - Weld end [x,y,z]
- * @param {number[]} dirStart - Unit travel direction at the weld start
- * @param {number[]} dirEnd   - Unit travel direction at the weld end
- */
-function buildFramingPoses(pStart, pEnd, dirStart, dirEnd) {
-  const wStart = lateralNormal(dirStart);
-  const wEnd = lateralNormal(dirEnd);
-  // The standby pose sits over the middle of the seam, offset the same way.
-  const wMid = lateralNormal(unit(
-    [
-      dirStart[0] + dirEnd[0],
-      dirStart[1] + dirEnd[1],
-      dirStart[2] + dirEnd[2],
-    ],
-    dirStart
-  ));
-
-  // Approach: -25mm back along travel, +45mm up, +35mm diagonal escape
+function framingPoses(pStart, pEnd, dirStart, dirEnd, chordDir, maxWeldZ, c, minHorizontal) {
+  const wStart = lateralNormal(dirStart, minHorizontal);
+  const wEnd = lateralNormal(dirEnd, minHorizontal);
+  const wMid = lateralNormal(chordDir, minHorizontal);
+  if (!wStart || !wEnd || !wMid) return null;
   const approach = [
-    round4(pStart[0] - 25 * dirStart[0] + 35 * wStart[0]),
-    round4(pStart[1] - 25 * dirStart[1] + 35 * wStart[1]),
-    round4(pStart[2] + 45),
+    round4(pStart[0] - c.approachBackoffMm * dirStart[0] + c.approachLateralMm * wStart[0]),
+    round4(pStart[1] - c.approachBackoffMm * dirStart[1] + c.approachLateralMm * wStart[1]),
+    round4(pStart[2] + c.approachLiftMm),
   ];
-
-  // Retract: +20mm forward along travel, +45mm up, +35mm diagonal escape
   const retract = [
-    round4(pEnd[0] + 20 * dirEnd[0] + 35 * wEnd[0]),
-    round4(pEnd[1] + 20 * dirEnd[1] + 35 * wEnd[1]),
-    round4(pEnd[2] + 45),
+    round4(pEnd[0] + c.retractForwardMm * dirEnd[0] + c.retractLateralMm * wEnd[0]),
+    round4(pEnd[1] + c.retractForwardMm * dirEnd[1] + c.retractLateralMm * wEnd[1]),
+    round4(pEnd[2] + c.retractLiftMm),
   ];
-
-  // Home: safe standby, +60mm lateral, +350mm up
   const home = [
-    round4((pStart[0] + pEnd[0]) / 2 + 60 * wMid[0]),
-    round4((pStart[1] + pEnd[1]) / 2 + 60 * wMid[1]),
-    round4(Math.max(pStart[2], pEnd[2]) + 350),
+    round4((pStart[0] + pEnd[0]) / 2 + c.homeLateralMm * wMid[0]),
+    round4((pStart[1] + pEnd[1]) / 2 + c.homeLateralMm * wMid[1]),
+    round4(maxWeldZ + c.homeLiftMm),
   ];
-
   return { approach, retract, home };
 }
 
-/** Assembles a waypoint record. */
-function makeWaypoint(name, pos, orient, type, speed, zone) {
-  return {
-    id: name,
-    name,
-    pos,
-    orient,
-    conf: [0, 0, 0, 0],
-    type,
-    speed,
-    zone,
-  };
+function waypoint(name, type, pos, orient, conf, move) {
+  return { name, type, pos, orient, conf: conf.slice(), speed: move ? move.speed : null, zone: move ? move.zone : null };
 }
 
-/**
- * Plans the waypoints for a straight seam — the original five-waypoint
- * template, with output unchanged.
- */
-function planStraightWaypoints(pStart, pEnd) {
-  const dir = unit([pEnd[0] - pStart[0], pEnd[1] - pStart[1], pEnd[2] - pStart[2]]);
-  const { approach, retract, home } = buildFramingPoses(pStart, pEnd, dir, dir);
-
+function buildSegments(profile, weldInstruction) {
+  const m = profile.motion;
+  const s = (index, instruction, role, from, to, move, via) => {
+    const seg = { index, instruction, role, from, to, speed: move.speed, zone: move.zone };
+    if (via) seg.via = via;
+    return seg;
+  };
   return [
-    makeWaypoint('home', home, UPRIGHT_QUAT.slice(), 'home', 'v100', 'z100'),
-    makeWaypoint('Target_30', approach, WELD_QUAT.slice(), 'approach', 'v60', 'z10'),
-    makeWaypoint('Target_40', pStart.map(round4), WELD_QUAT.slice(), 'weld_start', 'v100', 'fine'),
-    makeWaypoint('Target_20_5', pEnd.map(round4), WELD_QUAT.slice(), 'weld_end', 'v100', 'fine'),
-    makeWaypoint('Target_20', retract, WELD_QUAT.slice(), 'retract', 'v80', 'z10'),
+    s(0, 'MoveJ', 'air', null, TARGETS.home, m.home),
+    s(1, 'MoveL', 'air', TARGETS.home, TARGETS.approach, m.approach),
+    s(2, 'MoveL', 'approach', TARGETS.approach, TARGETS.weldStart, m.weldStart),
+    weldInstruction === 'MoveC'
+      ? s(3, 'MoveC', 'weld', TARGETS.weldStart, TARGETS.weldEnd, m.weld, TARGETS.weldVia)
+      : s(3, 'MoveL', 'weld', TARGETS.weldStart, TARGETS.weldEnd, m.weld),
+    s(4, 'MoveL', 'retract', TARGETS.weldEnd, TARGETS.retract, m.retract),
+    s(5, 'MoveL', 'air', TARGETS.retract, TARGETS.home, m.returnHome),
   ];
 }
 
-/**
- * Plans the waypoints for an arc seam: the straight set plus a via target,
- * with orientations that follow the seam round the curve.
- */
-function planArcWaypoints(pStart, pVia, pEnd, fit) {
-  const normal = readPoint(fit.normal);
-  const center = readPoint(fit.center);
-
-  // Travel direction on a circle is perpendicular to the radius, in the plane.
-  const tangentAt = (point) => {
-    const radial = unit([
-      point[0] - center[0],
-      point[1] - center[1],
-      point[2] - center[2],
-    ]);
-    return unit(cross(normal, radial));
-  };
-
-  const dirStart = tangentAt(pStart);
-  const dirEnd = tangentAt(pEnd);
-
-  const { approach, retract, home } = buildFramingPoses(pStart, pEnd, dirStart, dirEnd);
-
-  const viaQuat = weldQuatAlongArc(normal, fit.viaAngle);
-  const endQuat = weldQuatAlongArc(normal, fit.sweepAngle);
-
-  return [
-    makeWaypoint('home', home, UPRIGHT_QUAT.slice(), 'home', 'v100', 'z100'),
-    // The approach shares the weld-start attitude so the torch arrives ready.
-    makeWaypoint('Target_30', approach, WELD_QUAT.slice(), 'approach', 'v60', 'z10'),
-    makeWaypoint('Target_40', pStart.map(round4), WELD_QUAT.slice(), 'weld_start', 'v100', 'fine'),
-    makeWaypoint('Target_45', pVia.map(round4), viaQuat, 'weld_via', 'v100', 'fine'),
-    makeWaypoint('Target_20_5', pEnd.map(round4), endQuat, 'weld_end', 'v100', 'fine'),
-    // Retract holds the final weld attitude so the torch lifts away cleanly
-    // instead of snapping back to the start orientation.
-    makeWaypoint('Target_20', retract, endQuat.slice(), 'retract', 'v80', 'z10'),
-  ];
+/** Exact maximum Z of a fitted arc over [0, sweep]. */
+function arcMaxZ(fit) {
+  const c = vec(fit.center);
+  const n = vec(fit.normal);
+  const e1 = unit(sub(vec(fit.start), c));
+  const e2 = [n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]];
+  const z = (t) => c[2] + fit.radius * (Math.cos(t) * e1[2] + Math.sin(t) * e2[2]);
+  let best = Math.max(z(0), z(fit.sweepAngle));
+  const crit = Math.atan2(e2[2], e1[2]);
+  for (const t of [crit, crit + 2 * Math.PI, crit - 2 * Math.PI]) {
+    if (t > 0 && t < fit.sweepAngle) best = Math.max(best, z(t));
+  }
+  return best;
 }
 
-/**
- * Plans a seam and reports what was actually planned.
- *
- * An arc seam whose three points do not describe a usable circle — collinear,
- * coincident, or bowing so little off the chord that the radius runs away — is
- * planned as a straight seam instead, and the reason is returned so the caller
- * can say so rather than emitting arc motion the controller would reject.
- *
- * @param {{startPoint:{x,y,z}, endPoint:{x,y,z}, viaPoint?:{x,y,z}}} seam
- * @returns {{ waypoints: RobotWaypoint[], isArc: boolean, arc: object|null, fallbackReason: string|null }}
- */
-function planSeamPath(seam) {
-  if (!seam || !seam.startPoint || !seam.endPoint) {
-    throw new Error('pathPlanner: seam must contain startPoint and endPoint');
+function planStraight(seam, profile, diagnostics, extraGeometry = {}) {
+  const limits = profile.geometryLimits;
+  const pStart = vec(seam.startPoint);
+  const pEnd = vec(seam.endPoint);
+  const chord = sub(pEnd, pStart);
+  const lengthMm = len(chord);
+
+  if (lengthMm < limits.minSeamLengthMm) {
+    diagnostics.push(diagnostic('GEOMETRY_TOO_SHORT', 'error',
+      `Seam length ${lengthMm.toFixed(4)} mm is below the ${limits.minSeamLengthMm} mm minimum. Start and end must be distinct.`,
+      { details: { lengthMm, minSeamLengthMm: limits.minSeamLengthMm } }));
+    return null;
+  }
+  const dir = unit(chord);
+  const slopeDeg = deg(Math.atan2(Math.abs(chord[2]), Math.hypot(chord[0], chord[1])));
+  const minHorizontal = Math.cos((limits.maxSlopeDeg * Math.PI) / 180);
+  if (slopeDeg > limits.maxSlopeDeg) {
+    diagnostics.push(diagnostic('GEOMETRY_NEAR_VERTICAL_UNSUPPORTED', 'error',
+      `Seam slope ${slopeDeg.toFixed(2)}° exceeds ${limits.maxSlopeDeg}°. The lateral clearance direction is undefined for near-vertical seams, so no pose is invented.`,
+      { details: { slopeDeg, maxSlopeDeg: limits.maxSlopeDeg } }));
+    return null;
+  }
+  if (slopeDeg > 0.5) {
+    diagnostics.push(diagnostic('GEOMETRY_SLOPED_SEAM', 'info',
+      `Seam slope is ${slopeDeg.toFixed(2)}°. Approach/retract use the XY part of the travel tangent plus a vertical lift, so the back-off is shortened by cos(slope).`,
+      { details: { slopeDeg } }));
   }
 
-  const pStart = readPoint(seam.startPoint);
-  const pEnd = readPoint(seam.endPoint);
+  const weldQ = outputQuaternion(profile.weldQuaternionSource);
+  const homeQ = outputQuaternion(profile.homeQuaternionSource);
+  const maxWeldZ = Math.max(pStart[2], pEnd[2]);
+  const poses = framingPoses(pStart, pEnd, dir, dir, dir, maxWeldZ, profile.clearances, minHorizontal);
+  const m = profile.motion;
+  const conf = profile.configuration;
 
-  if (!seam.viaPoint) {
-    return {
-      waypoints: planStraightWaypoints(pStart, pEnd),
-      isArc: false,
-      arc: null,
-      fallbackReason: null,
-    };
-  }
-
-  const pVia = readPoint(seam.viaPoint);
-  const fit = fitCircle3Pt(seam.startPoint, seam.viaPoint, seam.endPoint);
-
-  if (!fit.ok) {
-    return {
-      waypoints: planStraightWaypoints(pStart, pEnd),
-      isArc: false,
-      arc: null,
-      fallbackReason: 'Arc fit failed (' + fit.reason + ') — planned as a straight seam.',
-    };
-  }
-
-  if (fit.nearlyStraight) {
-    return {
-      waypoints: planStraightWaypoints(pStart, pEnd),
-      isArc: false,
-      arc: fit,
-      fallbackReason:
-        'Via point bows only ' + fit.bow.toFixed(4) + 'mm off the chord — planned as a straight seam.',
-    };
-  }
+  const waypoints = [
+    waypoint(TARGETS.home, 'home', poses.home, homeQ, conf, m.home),
+    waypoint(TARGETS.approach, 'approach', poses.approach, weldQ, conf, m.approach),
+    waypoint(TARGETS.weldStart, 'weld_start', pStart.map(round4), weldQ, conf, m.weldStart),
+    waypoint(TARGETS.weldEnd, 'weld_end', pEnd.map(round4), weldQ, conf, m.weld),
+    waypoint(TARGETS.retract, 'retract', poses.retract, weldQ, conf, m.retract),
+  ];
 
   return {
-    waypoints: planArcWaypoints(pStart, pVia, pEnd, fit),
-    isArc: true,
-    arc: fit,
-    fallbackReason: null,
+    waypoints,
+    segments: buildSegments(profile, 'MoveL'),
+    geometry: {
+      requestedType: seam.type,
+      plannedType: 'straight',
+      startPoint: seam.startPoint,
+      endPoint: seam.endPoint,
+      viaPoint: seam.viaPoint || null,
+      seamWidthMm: seam.seamWidthMm,
+      seamWidthProvenance: seam.seamWidthProvenance,
+      chordLengthMm: lengthMm,
+      lengthMm,
+      slopeDeg,
+      arc: null,
+      homeZ: { formula: 'max weld-geometry Z + homeLiftMm', maxWeldZMm: maxWeldZ, homeLiftMm: profile.clearances.homeLiftMm },
+      offsetConvention: OFFSET_CONVENTION,
+      ...extraGeometry,
+    },
   };
 }
 
-/**
- * Generates the RAPID waypoints for a seam.
- *
- * @param {{ startPoint: {x,y,z}, endPoint: {x,y,z}, viaPoint?: {x,y,z}, seamWidth?: number }} seam
- * @returns {RobotWaypoint[]}
- */
-function planWaypoints(seam) {
-  return planSeamPath(seam).waypoints;
+function planArc(seam, fit, profile, diagnostics) {
+  const limits = profile.geometryLimits;
+  const pStart = vec(seam.startPoint);
+  const pVia = vec(seam.viaPoint);
+  const pEnd = vec(seam.endPoint);
+  const sweepDeg = deg(fit.sweepAngle);
+  const viaDeg = deg(fit.viaAngle);
+
+  if (fit.radius > limits.maxArcRadiusMm) {
+    diagnostics.push(diagnostic('ARC_RADIUS_OUT_OF_RANGE', 'error',
+      `Fitted radius ${fit.radius.toFixed(2)} mm exceeds the ${limits.maxArcRadiusMm} mm application limit.`,
+      { details: { radiusMm: fit.radius, maxArcRadiusMm: limits.maxArcRadiusMm } }));
+  }
+  if (sweepDeg > limits.maxArcSweepDeg) {
+    diagnostics.push(diagnostic('ARC_SWEEP_OUT_OF_RANGE', 'error',
+      `Arc sweep ${sweepDeg.toFixed(2)}° exceeds the ${limits.maxArcSweepDeg}° application limit for a single MoveC (a conservative application choice, not an ABB-documented figure).`,
+      { details: { sweepDeg, maxArcSweepDeg: limits.maxArcSweepDeg } }));
+  }
+  if (viaDeg < limits.minArcPointAngleDeg || sweepDeg - viaDeg < limits.minArcPointAngleDeg) {
+    diagnostics.push(diagnostic('ARC_VIA_TOO_CLOSE', 'error',
+      `The via point must be at least ${limits.minArcPointAngleDeg}° (seen from the centre) from both start and end; it is ${viaDeg.toFixed(3)}° from start and ${(sweepDeg - viaDeg).toFixed(3)}° from end.`,
+      { field: 'arc_via', details: { viaAngleDeg: viaDeg, sweepDeg } }));
+  }
+
+  const minHorizontal = Math.cos((limits.maxSlopeDeg * Math.PI) / 180);
+  const dirStart = tangentOnArc(fit, 0);
+  const dirEnd = tangentOnArc(fit, fit.sweepAngle);
+  const chordDir = unit(sub(pEnd, pStart));
+  for (const [label, t] of [['start', dirStart], ['end', dirEnd]]) {
+    const slope = deg(Math.atan2(Math.abs(t[2]), Math.hypot(t[0], t[1])));
+    if (slope > limits.maxSlopeDeg) {
+      diagnostics.push(diagnostic('GEOMETRY_NEAR_VERTICAL_UNSUPPORTED', 'error',
+        `Arc tangent at the ${label} rises ${slope.toFixed(2)}°, above ${limits.maxSlopeDeg}°. The lateral clearance direction is undefined, so no pose is invented.`,
+        { details: { at: label, slopeDeg: slope } }));
+    }
+  }
+  if (fit.planeTiltDeg > limits.maxArcPlaneTiltDeg) {
+    diagnostics.push(diagnostic('ARC_PLANE_TILTED', 'warning',
+      `The arc plane is tilted ${fit.planeTiltDeg.toFixed(2)}° from horizontal. The fixed weld quaternion is rotated about this tilted normal and the clearance offsets remain horizontal; review the torch attitude in RobotStudio.`,
+      { requiresAcknowledgement: true, details: { planeTiltDeg: fit.planeTiltDeg } }));
+  }
+  if (hasErrors(diagnostics)) return null;
+
+  const weldQ = normalizeQuaternion(profile.weldQuaternionSource);
+  const alongArc = (angle) => outputQuaternion(quatMultiply(quatFromAxisAngle(vec(fit.normal), angle), weldQ));
+  const startQ = outputQuaternion(weldQ);
+  const viaQ = alongArc(fit.viaAngle);
+  const endQ = alongArc(fit.sweepAngle);
+  const homeQ = outputQuaternion(profile.homeQuaternionSource);
+
+  const maxWeldZ = arcMaxZ(fit);
+  const poses = framingPoses(pStart, pEnd, dirStart, dirEnd, chordDir, maxWeldZ, profile.clearances, minHorizontal);
+  const m = profile.motion;
+  const conf = profile.configuration;
+
+  const waypoints = [
+    waypoint(TARGETS.home, 'home', poses.home, homeQ, conf, m.home),
+    waypoint(TARGETS.approach, 'approach', poses.approach, startQ, conf, m.approach),
+    waypoint(TARGETS.weldStart, 'weld_start', pStart.map(round4), startQ, conf, m.weldStart),
+    waypoint(TARGETS.weldVia, 'weld_via', pVia.map(round4), viaQ, conf, null),
+    waypoint(TARGETS.weldEnd, 'weld_end', pEnd.map(round4), endQ, conf, m.weld),
+    // Retract holds the final weld attitude so the torch lifts away without re-orienting.
+    waypoint(TARGETS.retract, 'retract', poses.retract, endQ, conf, m.retract),
+  ];
+
+  return {
+    waypoints,
+    segments: buildSegments(profile, 'MoveC'),
+    geometry: {
+      requestedType: 'arc',
+      plannedType: 'arc',
+      startPoint: seam.startPoint,
+      endPoint: seam.endPoint,
+      viaPoint: seam.viaPoint,
+      seamWidthMm: seam.seamWidthMm,
+      seamWidthProvenance: seam.seamWidthProvenance,
+      chordLengthMm: fit.chordLength,
+      lengthMm: fit.arcLength,
+      slopeDeg: null,
+      arc: {
+        center: fit.center,
+        radiusMm: fit.radius,
+        normal: fit.normal,
+        sweepDeg,
+        viaAngleDeg: viaDeg,
+        arcLengthMm: fit.arcLength,
+        viaBowMm: fit.bow,
+        maxChordDeviationMm: fit.maxChordDeviation,
+        planeTiltDeg: fit.planeTiltDeg,
+        direction: fit.direction,
+        start: fit.start,
+        samples: sampleArc(fit, limits.arcSampleSegments),
+        sampling: `${limits.arcSampleSegments} equal-angle segments on the fitted circle (display only; the controller interpolates MoveC itself)`,
+      },
+      homeZ: { formula: 'max weld-geometry Z (exact arc maximum) + homeLiftMm', maxWeldZMm: maxWeldZ, homeLiftMm: profile.clearances.homeLiftMm },
+      offsetConvention: OFFSET_CONVENTION,
+    },
+  };
 }
 
-module.exports = {
-  planWaypoints,
-  planSeamPath,
+const FIT_REASON_CODES = {
+  coincident_points: ['ARC_COINCIDENT_POINTS', 'Two of the three arc points coincide (closer than the minimum separation). This is invalid input and is not treated as a line.'],
+  collinear_points: ['ARC_COLLINEAR_POINTS', 'The three arc points are collinear, so no circle passes through them. Correct the via point or describe the seam as a straight curve: line.'],
+  via_not_between: ['ARC_VIA_NOT_BETWEEN', 'The via point does not lie between start and end along the fitted circle.'],
+  non_finite: ['GEOMETRY_NON_FINITE', 'Arc points contain non-finite values.'],
+  missing_point: ['GEOMETRY_MISSING_POINT', 'An arc point is missing.'],
 };
+
+/**
+ * @param {object} seam     Output of parseFeatureText().seam
+ * @param {object} profile  Resolved profile (fixed-base-quaternion)
+ * @returns {{ok: boolean, diagnostics: object[], waypoints?: object[], segments?: object[], geometry?: object}}
+ */
+function planSeam(seam, profile) {
+  const diagnostics = [];
+  const sourceNorm = quatNorm(profile.weldQuaternionSource);
+  if (Math.abs(sourceNorm - 1) > 1e-6) {
+    diagnostics.push(diagnostic('PROFILE_QUATERNION_NORMALIZED', 'info',
+      `The profile weld quaternion has norm ${sourceNorm.toFixed(9)} and was normalised before use. Normalisation does not validate the torch attitude.`,
+      { details: { sourceNorm } }));
+  }
+
+  let result = null;
+  if (seam.type === 'straight') {
+    result = planStraight(seam, profile, diagnostics);
+  } else {
+    const limits = profile.geometryLimits;
+    const fit = fitCircle3Pt(seam.startPoint, seam.viaPoint, seam.endPoint);
+    if (!fit.ok) {
+      const [code, message] = FIT_REASON_CODES[fit.reason] || ['ARC_FIT_FAILED', `Arc fit failed (${fit.reason}).`];
+      diagnostics.push(diagnostic(code, 'error', message, { details: fit.details }));
+    } else if (fit.maxChordDeviation < limits.nearStraightDeviationMm) {
+      const details = { maxChordDeviationMm: fit.maxChordDeviation, viaBowMm: fit.bow, radiusMm: fit.radius, thresholdMm: limits.nearStraightDeviationMm };
+      if (profile.nearStraightArcPolicy === 'convert_to_line') {
+        diagnostics.push(diagnostic('ARC_CONVERTED_TO_LINE', 'warning',
+          `The requested arc deviates at most ${fit.maxChordDeviation.toFixed(4)} mm from its chord and was converted to a straight seam because this revision selected that option. The via point is ignored.`,
+          { requiresAcknowledgement: true, details }));
+        result = planStraight({ ...seam, type: 'straight' }, profile, diagnostics, {
+          requestedType: 'arc',
+          viaPoint: seam.viaPoint,
+          conversion: { from: 'arc', to: 'straight', ...details },
+        });
+      } else {
+        diagnostics.push(diagnostic('ARC_NEAR_STRAIGHT', 'error',
+          `The arc deviates at most ${fit.maxChordDeviation.toFixed(4)} mm from its chord (threshold ${limits.nearStraightDeviationMm} mm); its radius (${fit.radius.toFixed(1)} mm) is numerically fragile. Generation is blocked. Correct the input, or reprocess with the explicit near-straight conversion option.`,
+          { details }));
+      }
+    } else {
+      result = planArc(seam, fit, profile, diagnostics);
+    }
+  }
+
+  if (!result || hasErrors(diagnostics)) return { ok: false, diagnostics };
+  if (!result.geometry.conversion) result.geometry.conversion = null;
+  return { ok: true, diagnostics, ...result };
+}
+
+module.exports = { planSeam, TARGETS, OFFSET_CONVENTION, lateralNormal, arcMaxZ, pointOnArc };

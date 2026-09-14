@@ -1,49 +1,38 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import ToastNotification from "./ToastNotification";
+import { createToastController } from "@/lib/toastController";
 
 const ToastContext = createContext(null);
 
 export function ToastProvider({ children }) {
-  const [toast, setToast] = useState({
-    isOpen: false,
-    message: "",
-    title: "",
-    type: "success", // "success" | "error" | "info"
-  });
+  const [state, setState] = useState({ toast: null, phase: "hidden" });
+  const controllerRef = useRef(null);
+  if (controllerRef.current === null) {
+    controllerRef.current = createToastController({ onChange: (s) => setState(s) });
+  }
 
-  const showToast = useCallback((title, message, type = "success") => {
-    setToast({
-      isOpen: true,
-      title,
-      message,
-      type,
-    });
+  useEffect(() => {
+    const controller = controllerRef.current;
+    return () => controller.destroy();
   }, []);
 
-  const hideToast = useCallback(() => {
-    setToast((prev) => ({ ...prev, isOpen: false }));
-  }, []);
+  const [api] = useState(() => ({
+    showToast: (title, message, type = "success") => controllerRef.current.show(title, message, type),
+    hideToast: () => controllerRef.current.dismiss(),
+  }));
 
   return (
-    <ToastContext.Provider value={{ showToast, hideToast }}>
+    <ToastContext.Provider value={api}>
       {children}
-      <ToastNotification
-        isOpen={toast.isOpen}
-        title={toast.title}
-        message={toast.message}
-        type={toast.type}
-        onClose={hideToast}
-      />
+      <ToastNotification toast={state.toast} phase={state.phase} onClose={api.hideToast} />
     </ToastContext.Provider>
   );
 }
 
 export function useToast() {
   const context = useContext(ToastContext);
-  if (!context) {
-    throw new Error("useToast must be used within a ToastProvider");
-  }
+  if (!context) throw new Error("useToast must be used within a ToastProvider");
   return context;
 }

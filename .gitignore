@@ -30,6 +30,7 @@ yarn-error.log*
 # env files
 .env*
 *.env
+!.env.example
 
 # vercel
 .vercel
@@ -38,5 +39,13 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# backend uploads staging
+# backend uploads staging (pre-v2 layout; kept so existing staged files stay untracked)
 backend/uploads/
+
+# local job store and operator watch folder (runtime data, never committed)
+backend/data/
+watch-inbox/
+
+# test and benchmark scratch output
+/test-results/
+/playwright-report/

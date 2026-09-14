@@ -1,515 +1,223 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import React, { useEffect, useState } from "react";
 import StepperProgress from "@/components/StepperProgress";
-import RAPIDCodeEditor from "@/components/RAPIDCodeEditor";
+import WeldSimulation3D from "@/components/WeldSimulation3D";
+import PlaybackControls from "@/components/PlaybackControls";
+import TargetTable from "@/components/TargetTable";
+import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useToast } from "@/components/ToastContext";
-import { useIntegrationMode } from "@/components/IntegrationModeContext";
-import { useTestingWorkflow } from "@/components/TestingWorkflowContext";
-import { useTcpWorkflow } from "@/components/TcpWorkflowContext";
-import { csvToRapid } from "@/services/csvToRapid";
-import axiosClient from "@/services/axiosClient";
+import { api } from "@/services/apiClient";
+import { createPlaybackClock } from "@/lib/playback";
+import { Card, Icon, InlineError, JobIdentityCard, ValidationPanel } from "@/components/StatusPanels";
 
-// ----------------------------------------------------------------------
-// 3D Execution Viewport Canvas (Synchronized Realtime Kinematics)
-// ----------------------------------------------------------------------
-function ExecutionViewportCanvas({ points, isPlaying, progressRatio }) {
-  const mountRef = useRef(null);
-  const torchRef = useRef(null);
-  const waypointsRef = useRef({ approach: null, weldStart: null, weldEnd: null, retract: null });
+const LAUNCH_TEXT = {
+  process_started: "RobotStudio process started. This does not confirm that a station opened or that the module was imported, compiled or run.",
+  not_found: "RobotStudio.exe was not found under Program Files\\ABB. The module file is still saved; open RobotStudio yourself or set VD_ROBOTSTUDIO_EXE for the backend.",
+  unsupported_os: "Launching RobotStudio is only supported when the backend runs on Windows. The module file is still saved.",
+  override_invalid: "VD_ROBOTSTUDIO_EXE is set but does not point to RobotStudio.exe. The module file is still saved.",
+  spawn_error: "The operating system refused to start RobotStudio. The module file is still saved.",
+  spawn_timeout: "No process start was observed in time. Check whether RobotStudio opened; the module file is still saved.",
+  not_attempted: "RobotStudio was not started because saving the module file failed.",
+};
 
-  useEffect(() => {
-    const container = mountRef.current;
-    if (!container) return;
+const CHECKLIST = [
+  "Open the RobotStudio station and virtual controller that match the target robot (not an arbitrary station).",
+  "Confirm the tool and work object named in the module header exist there with the expected definitions.",
+  "Import the module (RAPID → Load Module) and run a syntax check; record any errors.",
+  "Synchronise and simulate; check configuration, reachability, singularities and collisions against the real cell model.",
+  "Record the RobotStudio and RobotWare versions, the output SHA-256 and the result below as evidence.",
+  "Physical dry runs and welding require separate authorisation and commissioning; this checklist is not a safety certification.",
+];
 
-    const width = container.clientWidth || 600;
-    const height = container.clientHeight || 400;
-
-    // 1. Initialize Three.js Scene and Perspective Camera
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#060913");
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
-    camera.position.set(130, 95, 150);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    container.appendChild(renderer.domElement);
-
-    // 2. Initialize Orbit Controls
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-
-    // 3. Scene Lighting & Floor Reference Grid
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
-    scene.add(ambientLight);
-
-    const dirLight = new THREE.DirectionalLight(0x38bdf8, 2.0);
-    dirLight.position.set(150, 300, 150);
-    scene.add(dirLight);
-
-    const gridHelper = new THREE.GridHelper(400, 20, 0x1e293b, 0x0f172a);
-    gridHelper.position.y = -35;
-    scene.add(gridHelper);
-
-    // 4. Parse Waypoint Coordinates & Center Projection Scale
-    const rawPoints = points && points.length >= 4 ? points : [
-      { name: "p_approach", x: 699.9, y: 1349.6, z: 1283.1 },
-      { name: "Target_10", x: 673.9, y: 1349.3, z: 1173.0 },
-      { name: "Target_20", x: 552.5, y: 1348.2, z: 1372.8 },
-      { name: "p_retract", x: 526.5, y: 1347.9, z: 1402.8 }
-    ];
-
-    let avgX = 0, avgY = 0, avgZ = 0;
-    rawPoints.forEach(p => { avgX += p.x; avgY += p.y; avgZ += p.z; });
-    avgX /= rawPoints.length; avgY /= rawPoints.length; avgZ /= rawPoints.length;
-
-    // Scale Factor: 0.35
-    const toVec = (p) => new THREE.Vector3((p.x - avgX) * 0.35, (p.z - avgZ) * 0.35, (p.y - avgY) * 0.35);
-
-    const vecApproach = toVec(rawPoints[0]);
-    const vecWeldStart = toVec(rawPoints[1]);
-    const vecWeldEnd = toVec(rawPoints[rawPoints.length - 2]);
-    const vecRetract = toVec(rawPoints[rawPoints.length - 1]);
-
-    waypointsRef.current = { approach: vecApproach, weldStart: vecWeldStart, weldEnd: vecWeldEnd, retract: vecRetract };
-
-    const centerWeld = new THREE.Vector3().addVectors(vecWeldStart, vecWeldEnd).multiplyScalar(0.5);
-    controls.target.copy(centerWeld);
-
-    // A. Air Motion Paths (Dashed Lines)
-    const createDashedLine = (p1, p2) => {
-      const geo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
-      const mat = new THREE.LineDashedMaterial({ color: 0x475569, dashSize: 3, gapSize: 2, linewidth: 1.5 });
-      const line = new THREE.Line(geo, mat);
-      line.computeLineDistances();
-      return line;
-    };
-    scene.add(createDashedLine(vecApproach, vecWeldStart));
-    scene.add(createDashedLine(vecWeldEnd, vecRetract));
-
-    // B. Weld Seam Trajectory (Cyan Solid Line)
-    const weldGeo = new THREE.BufferGeometry().setFromPoints([vecWeldStart, vecWeldEnd]);
-    const weldMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, linewidth: 5 });
-    const weldLine = new THREE.Line(weldGeo, weldMat);
-    scene.add(weldLine);
-
-    // C. Waypoint Robtarget Markers
-    const addMarker = (pos, color, emissive, size = 1.2) => {
-      const geo = new THREE.SphereGeometry(size, 16, 16);
-      const mat = new THREE.MeshStandardMaterial({ color, emissive, metalness: 0.8 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.copy(pos);
-      scene.add(mesh);
-    };
-    addMarker(vecApproach, 0x64748b, 0x334155, 0.8);
-    addMarker(vecWeldStart, 0x10b981, 0x059669, 1.2);
-    addMarker(vecWeldEnd, 0xef4444, 0xb91c1c, 1.2);
-    addMarker(vecRetract, 0x64748b, 0x334155, 0.8);
-
-    // 5. Proportional Industrial Torch Geometry
-    const torchGroup = new THREE.Group();
-
-    // Brass Tip Nozzle (Pointing Downward)
-    const nozzleGeo = new THREE.ConeGeometry(1.6, 9, 16);
-    const nozzleMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.95, roughness: 0.1 });
-    const nozzleMesh = new THREE.Mesh(nozzleGeo, nozzleMat);
-    nozzleMesh.rotation.x = Math.PI;
-    nozzleMesh.position.y = 4.5;
-    torchGroup.add(nozzleMesh);
-
-    // Industrial Orange Main Body
-    const bodyGeo = new THREE.CylinderGeometry(2.8, 3.5, 20, 16);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf97316, metalness: 0.7, roughness: 0.2 });
-    const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    bodyMesh.position.y = 19;
-    torchGroup.add(bodyMesh);
-
-    // Status Ring
-    const ringGeo = new THREE.TorusGeometry(3.6, 0.6, 16, 32);
-    const ringMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7 });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.rotation.x = Math.PI / 2;
-    ringMesh.position.y = 26;
-    torchGroup.add(ringMesh);
-
-    scene.add(torchGroup);
-    torchRef.current = torchGroup;
-
-    // Animation Loop
-    let animationFrameId;
-    const animate = () => {
-      animationFrameId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    const handleResize = () => {
-      if (!container) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
-    window.addEventListener("resize", handleResize);
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      cancelAnimationFrame(animationFrameId);
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
-    };
-  }, [points]);
-
-  // Interpolate Torch Position along Trajectory Segments
-  useEffect(() => {
-    if (torchRef.current && waypointsRef.current.approach) {
-      const { approach, weldStart, weldEnd, retract } = waypointsRef.current;
-      const p = Math.min(Math.max(progressRatio, 0), 1);
-
-      let targetPos = new THREE.Vector3();
-
-      if (p < 0.25) {
-        targetPos.lerpVectors(approach, weldStart, p / 0.25);
-      } else if (p <= 0.75) {
-        targetPos.lerpVectors(weldStart, weldEnd, (p - 0.25) / 0.50);
-      } else {
-        targetPos.lerpVectors(weldEnd, retract, (p - 0.75) / 0.25);
-      }
-
-      torchRef.current.position.copy(targetPos);
-    }
-  }, [progressRatio]);
-
-  return <div ref={mountRef} className="w-full h-full min-h-[420px] relative overflow-hidden rounded-xl" />;
-}
-
-// ----------------------------------------------------------------------
-// Main Export Page Component
-// ----------------------------------------------------------------------
 export default function ExportPage() {
-  const router = useRouter();
+  const { job, operator, applyJobView } = useWorkflowSession();
   const { showToast } = useToast();
-  const { mode } = useIntegrationMode();
-  const { csvData } = useTestingWorkflow();
-  const { canonicalWeldPath, rawPayload } = useTcpWorkflow();
+  const [clock] = useState(() => createPlaybackClock());
+  const [rs, setRs] = useState({ data: null, error: null });
+  const [download, setDownload] = useState(null);
+  const [copy, setCopy] = useState(null);
+  const [exportState, setExportState] = useState({ busy: null, outcome: null, error: null });
+  const [evidence, setEvidence] = useState({ result: "not_run", robotStudioVersion: "", robotWareVersion: "", robotVariant: "", notes: "" });
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const [evidenceError, setEvidenceError] = useState(null);
 
-  const [syncing, setSyncing] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const maxTime = 12;
-  const [showModal, setShowModal] = useState(false);
-  const [backendRapidCode, setBackendRapidCode] = useState(null);
-
-  // Simulation Progress Timer
   useEffect(() => {
-    let interval = null;
-    if (isPlaying) {
-      interval = setInterval(() => {
-        setCurrentTime((prev) => {
-          if (prev >= maxTime) {
-            setIsPlaying(false);
-            return 0;
-          }
-          return prev + 0.1;
-        });
-      }, 100);
-    } else {
-      clearInterval(interval);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying]);
-
-  // Fetch Compiled RAPID Code Module from Express Backend
-  useEffect(() => {
-    let isMounted = true;
-    async function fetchRapidCode() {
-      try {
-        const res = await axiosClient.get("/rapid-code");
-        if (isMounted && res.data && res.data.rapidCode) {
-          setBackendRapidCode(res.data.rapidCode);
-        }
-      } catch (e) {
-        console.warn("Express backend API /rapid-code fallback:", e.message);
-      }
-    }
-    fetchRapidCode();
-    return () => { isMounted = false; };
+    let cancelled = false;
+    api.robotStudioStatus().then((d) => { if (!cancelled) setRs({ data: d, error: null }); }).catch((err) => { if (!cancelled) setRs({ data: null, error: err }); });
+    return () => { cancelled = true; };
   }, []);
 
-  const activePoints = useMemo(() => {
-    if (canonicalWeldPath?.pathPoints && canonicalWeldPath.pathPoints.length > 0) {
-      return canonicalWeldPath.pathPoints;
-    }
-    if (rawPayload?.pathPoints && rawPayload.pathPoints.length > 0) {
-      return rawPayload.pathPoints;
-    }
-    return [
-      { name: "p_approach", x: 699.9, y: 1349.6, z: 1283.1 },
-      { name: "Target_10", x: 673.9, y: 1349.3, z: 1173.0 },
-      { name: "Target_20", x: 552.5, y: 1348.2, z: 1372.8 },
-      { name: "p_retract", x: 526.5, y: 1347.9, z: 1402.8 }
-    ];
-  }, [canonicalWeldPath, rawPayload]);
+  if (!job) return null;
+  const { record, review, gates } = job;
+  const allowed = gates.export.allowed;
 
-  const testingRapidCode = useMemo(() => {
-    if (mode === "testing" && csvData && csvData.length > 0) {
-      return csvToRapid(csvData);
-    }
-    return null;
-  }, [mode, csvData]);
-
-  // Synchronize compiled RAPID output with Generate step
-  const activeCode = useMemo(() => {
-    if (mode === "testing" && testingRapidCode) return testingRapidCode;
-    return canonicalWeldPath?.rapidCode || backendRapidCode || "! Fetching compiled RAPID code...";
-  }, [mode, testingRapidCode, canonicalWeldPath, backendRapidCode]);
-
-  const fileName = mode === "testing" ? "Module1.mod" : "WeldModule.mod";
-
-  // Handle Local Export & Native Next.js API Launcher Endpoint Call
-  const handleCopyAndDownload = async () => {
-    setSyncing(true);
-    showToast(
-      "📋 Auto-Saving & Copied...",
-      `Saving ${fileName} and copying RAPID code to system clipboard...`,
-      "info"
-    );
-
+  const doDownload = async () => {
+    setDownload({ status: "working" });
     try {
-      // 1. Copy RAPID code directly to system Clipboard
-      await navigator.clipboard.writeText(activeCode);
-
-      // 2. Trigger native browser file download (.mod)
-      const blob = new Blob([activeCode], { type: "text/plain;charset=utf-8" });
+      const m = await api.fetchModule(record.jobId, record.revision, record.output.sha256);
+      if (m.sha256 !== record.output.sha256) throw new Error("The downloaded bytes do not carry the expected output hash.");
+      const blob = new Blob([m.text], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      // 3. Invoke Next.js server route (Port 3000) to spawn desktop executable
-      const res = await fetch("/api/launch-robotstudio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: activeCode, fileName }),
-      });
-      const data = await res.json();
-
-      if (data && data.success && data.launched) {
-        showToast(
-          "🚀 RobotStudio Synced!",
-          `RobotStudio Desktop app launched with ${fileName}.`,
-          "success"
-        );
-      } else {
-        // App not detected on PC -> Show download dialog modal
-        setShowModal(true);
-      }
-    } catch (e) {
-      console.error(e);
-      setShowModal(true);
-    } finally {
-      setSyncing(false);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = m.fileName || "Module1.mod";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setDownload({ status: "started", message: `Browser download started: ${a.download}` });
+    } catch (err) {
+      setDownload({ status: "failed", message: err.message, error: err });
     }
   };
 
-  const handleResetSession = () => {
-    showToast(
-      "🔄 Session Reset Completed",
-      "Cleared local trajectories and returned variables back to system defaults."
-    );
-    router.push("/acquire");
+  const doCopy = async () => {
+    try {
+      const m = await api.fetchModule(record.jobId, record.revision, record.output.sha256);
+      if (!navigator.clipboard) throw Object.assign(new Error("Clipboard API unavailable"), { clipboard: true });
+      await navigator.clipboard.writeText(m.text);
+      setCopy({ status: "copied", message: "Module text copied to the clipboard." });
+    } catch (err) {
+      const denied = err.clipboard || err.name === "NotAllowedError" || !err.status;
+      setCopy({ status: "failed", message: denied && !err.network ? "The browser did not allow clipboard access. Use Download instead." : err.message });
+    }
   };
 
-  const progressRatio = currentTime / maxTime;
-  const formattedSec = Math.floor(currentTime) < 10 ? `0${Math.floor(currentTime)}` : Math.floor(currentTime);
+  const doExport = async (action) => {
+    setExportState({ busy: action, outcome: null, error: null });
+    try {
+      const r = await api.exportModule(record.jobId, record.revision, { outputSha256: record.output.sha256, action, operator });
+      applyJobView(r);
+      setExportState({ busy: null, outcome: r.outcome, error: null });
+      const saved = r.outcome.saved;
+      if (saved && (saved.status === "saved" || saved.status === "already_saved")) showToast("Module saved", `${saved.fileName} in the export folder.`, "success");
+      else showToast("Save failed", saved ? saved.message : "Unknown error", "error");
+    } catch (err) {
+      setExportState({ busy: null, outcome: null, error: err });
+    }
+  };
+
+  const submitEvidence = async (e) => {
+    e.preventDefault();
+    setEvidenceBusy(true);
+    setEvidenceError(null);
+    try {
+      const view = await api.recordEvidence(record.jobId, record.revision, { ...evidence, operator, outputSha256: record.output.sha256 });
+      applyJobView(view);
+      showToast("Evidence recorded", "Stored as operator-reported evidence for this output hash.", "success");
+    } catch (err) {
+      setEvidenceError(err);
+    } finally {
+      setEvidenceBusy(false);
+    }
+  };
+
+  const outcome = exportState.outcome;
 
   return (
-    <div className="flex-1 flex overflow-hidden w-full h-full relative">
-      {/* Left Sidebar Panel (45% - Consistent bg-surface-container-low theme) */}
-      <aside className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-4 shrink-0 z-20 overflow-y-auto">
-        <div className="px-1 select-none">
-          <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
-            Export & Controller Sync
-          </h2>
-          <p className="text-xs text-on-surface-variant font-medium mt-1 leading-relaxed">
-            Transfer compiled ABB RAPID module ({fileName}) directly to virtual RobotStudio controller or physical IRC5/OmniCore unit.
-          </p>
+    <div className="flex-1 flex overflow-hidden w-full h-full relative min-h-0">
+      <aside className="bg-surface-container-low border-r border-outline-variant flex flex-col w-[46%] min-w-[420px] h-full pt-5 px-5 gap-3 shrink-0 overflow-y-auto">
+        <div>
+          <h1 className="text-xl font-extrabold text-on-surface tracking-tight">Download / Open RobotStudio</h1>
+          <p className="text-xs text-on-surface-variant mt-1">Obtain the reviewed candidate module for manual validation in RobotStudio. Nothing here transfers code to a controller or starts robot motion.</p>
         </div>
-
-        {/* Dynamic Stepper Navigation */}
         <StepperProgress />
+        <JobIdentityCard record={record} gates={gates} />
 
-        <div className="h-px w-full bg-outline-variant/60 my-0.5 opacity-50"></div>
-
-        {/* Deployment Instruction Checklist */}
-        <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-sm flex flex-col gap-3 select-none">
-          <h3 className="font-bold text-xs text-on-surface flex items-center gap-2 uppercase tracking-wide">
-            <span className="material-symbols-outlined text-primary text-[18px]">sync_alt</span>
-            Desktop Deployment Checklist
-          </h3>
-          
-          <div className="grid grid-cols-1 gap-2 text-xs">
-            <div className="flex items-center gap-2.5 p-2 rounded-lg bg-surface-container-lowest border border-outline-variant/40">
-              <span className="w-5 h-5 rounded-full bg-primary/10 text-primary font-bold text-[11px] flex items-center justify-center shrink-0">1</span>
-              <span className="text-on-surface font-medium text-[11px]">Download <strong>{fileName}</strong> & copy code to clipboard</span>
-            </div>
-            <div className="flex items-center gap-2.5 p-2 rounded-lg bg-surface-container-lowest border border-outline-variant/40">
-              <span className="w-5 h-5 rounded-full bg-primary/10 text-primary font-bold text-[11px] flex items-center justify-center shrink-0">2</span>
-              <span className="text-on-surface font-medium text-[11px]">Open <strong>ABB RobotStudio 2025</strong> Program Editor</span>
-            </div>
-            <div className="flex items-center gap-2.5 p-2 rounded-lg bg-surface-container-lowest border border-outline-variant/40">
-              <span className="w-5 h-5 rounded-full bg-primary/10 text-primary font-bold text-[11px] flex items-center justify-center shrink-0">3</span>
-              <span className="text-on-surface font-medium text-[11px]">Paste module & Press <strong>Apply / Execute PROC main()</strong></span>
-            </div>
+        {!allowed && (
+          <div className="border border-amber-400 bg-amber-50 text-amber-900 rounded-xl p-3 text-xs" role="alert">
+            <p className="font-bold flex items-center gap-1"><Icon name="lock" className="text-[16px]" />Export is blocked for this revision</p>
+            <ul className="list-disc pl-5 mt-1">{gates.export.reasons.map((r) => <li key={r.code}>{r.message}</li>)}</ul>
           </div>
+        )}
 
-          <div className="flex gap-2 pt-1 select-none">
-            <button 
-              onClick={handleCopyAndDownload}
-              disabled={syncing}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider py-3 px-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[18px]">download</span>
-              {syncing ? "Exporting File..." : `Download ${fileName}`}
+        <Card title="Get the module (independent actions)" icon="download">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button type="button" onClick={doDownload} disabled={!allowed || (download && download.status === "working")} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg py-2.5 text-xs font-bold uppercase flex items-center justify-center gap-1.5">
+              <Icon name="download" className="text-[16px]" />Download .mod
             </button>
-            <button 
-              onClick={handleResetSession}
-              className="bg-surface hover:bg-surface-container-high border border-outline-variant text-on-surface-variant font-bold text-xs uppercase tracking-wider py-3 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-              title="Reset session and return to start"
-            >
-              <span className="material-symbols-outlined text-[18px]">refresh</span>
-              Reset
+            <button type="button" onClick={doCopy} disabled={!allowed} className="bg-surface border border-outline-variant disabled:opacity-40 rounded-lg py-2.5 text-xs font-bold uppercase flex items-center justify-center gap-1.5">
+              <Icon name="content_copy" className="text-[16px]" />Copy text
+            </button>
+            <button type="button" onClick={() => doExport("save")} disabled={!allowed || !!exportState.busy} className="bg-surface border border-outline-variant disabled:opacity-40 rounded-lg py-2.5 text-xs font-bold uppercase flex items-center justify-center gap-1.5">
+              <Icon name="save" className="text-[16px]" />{exportState.busy === "save" ? "Saving…" : "Save to export folder"}
+            </button>
+            <button type="button" onClick={() => doExport("save_and_launch")} disabled={!allowed || !!exportState.busy} className="bg-slate-800 hover:bg-slate-900 disabled:opacity-40 text-white rounded-lg py-2.5 text-xs font-bold uppercase flex items-center justify-center gap-1.5">
+              <Icon name="open_in_new" className="text-[16px]" />{exportState.busy === "save_and_launch" ? "Working…" : "Save and open RobotStudio"}
             </button>
           </div>
-        </div>
+          <ul className="mt-3 flex flex-col gap-1 text-[11px]" aria-live="polite">
+            {download && download.status !== "working" && <li className={download.status === "started" ? "text-emerald-800" : "text-red-800"}>Download: {download.message}</li>}
+            {copy && <li className={copy.status === "copied" ? "text-emerald-800" : "text-red-800"}>Copy: {copy.message}</li>}
+            {outcome && outcome.saved && (
+              <li className={outcome.saved.status === "failed" ? "text-red-800" : "text-emerald-800"}>
+                Save: {outcome.saved.status === "saved" ? `written as ${outcome.saved.fileName}` : outcome.saved.status === "already_saved" ? `${outcome.saved.fileName} already exists with identical bytes` : `${outcome.saved.message} (${outcome.saved.code})`}
+              </li>
+            )}
+            {outcome && outcome.launch && <li className={outcome.launch.status === "process_started" ? "text-sky-900" : "text-amber-900"}>RobotStudio: {LAUNCH_TEXT[outcome.launch.status] || outcome.launch.message}</li>}
+          </ul>
+          <InlineError error={exportState.error || (download && download.error)} />
+          <p className="text-[10px] text-on-surface-variant mt-2">
+            RobotStudio discovery: {rs.data ? `${rs.data.status}${rs.data.exeName ? ` (${rs.data.exeName} via ${rs.data.discovery})` : ""}` : rs.error ? "backend unavailable" : "checking…"}. Discovery only checks that a file exists.
+            Passing the module path on the command line has not been verified to import it; follow the checklist.
+          </p>
+        </Card>
 
-        {/* RAPID Code Editor Panel */}
-        <div className="flex-1 flex flex-col min-h-0 pb-4">
-          <RAPIDCodeEditor 
-            code={activeCode} 
-            title={`DYNAMIC ABB RAPID MODULE (${fileName.toUpperCase()})`} 
-            status="COMPILED & READY FOR CONTROLLER" 
-            onCopySuccess={handleCopyAndDownload}
-          />
-        </div>
+        <Card title="Manual RobotStudio validation checklist" icon="checklist">
+          <ol className="list-decimal pl-5 text-[11px] flex flex-col gap-1">{CHECKLIST.map((c) => <li key={c}>{c}</li>)}</ol>
+        </Card>
+
+        <ValidationPanel gates={gates} />
+
+        <Card title="Record RobotStudio evidence (operator-reported)" icon="assignment_turned_in">
+          <form onSubmit={submitEvidence} className="grid grid-cols-2 gap-2 text-[11px]">
+            <label className="flex flex-col gap-1 font-bold">Result
+              <select value={evidence.result} onChange={(e) => setEvidence({ ...evidence, result: e.target.value })} className="font-normal border border-outline-variant rounded px-2 py-1 bg-surface-container-highest">
+                <option value="not_run">Not run</option><option value="pass">Pass</option><option value="fail">Fail</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 font-bold">Robot variant
+              <input value={evidence.robotVariant} maxLength={80} onChange={(e) => setEvidence({ ...evidence, robotVariant: e.target.value })} className="font-normal border border-outline-variant rounded px-2 py-1 bg-surface-container-highest" />
+            </label>
+            <label className="flex flex-col gap-1 font-bold">RobotStudio version
+              <input value={evidence.robotStudioVersion} maxLength={80} onChange={(e) => setEvidence({ ...evidence, robotStudioVersion: e.target.value })} className="font-normal border border-outline-variant rounded px-2 py-1 bg-surface-container-highest" />
+            </label>
+            <label className="flex flex-col gap-1 font-bold">RobotWare version
+              <input value={evidence.robotWareVersion} maxLength={80} onChange={(e) => setEvidence({ ...evidence, robotWareVersion: e.target.value })} className="font-normal border border-outline-variant rounded px-2 py-1 bg-surface-container-highest" />
+            </label>
+            <label className="col-span-2 flex flex-col gap-1 font-bold">Notes (syntax result, faults, tool/wobj used)
+              <textarea rows={3} maxLength={2000} value={evidence.notes} onChange={(e) => setEvidence({ ...evidence, notes: e.target.value })} className="font-normal border border-outline-variant rounded px-2 py-1 bg-surface-container-highest" />
+            </label>
+            <div className="col-span-2"><InlineError error={evidenceError} /></div>
+            <button type="submit" disabled={evidenceBusy} className="col-span-2 bg-primary text-on-primary rounded-lg py-2 font-bold uppercase disabled:opacity-50">Record for output {record.output.sha256.slice(0, 12)}…</button>
+          </form>
+          {review.externalEvidence.length > 0 && (
+            <ul className="mt-2 text-[10px] flex flex-col gap-1">
+              {review.externalEvidence.map((ev, i) => <li key={i} className="border-t border-outline-variant/30 pt-1">{new Date(ev.reportedAt).toLocaleString()} · {ev.reportedBy} · {ev.result} · RS {ev.robotStudioVersion || "?"} · {ev.notes}</li>)}
+            </ul>
+          )}
+        </Card>
+
+        {review.exports.length > 0 && (
+          <Card title="Export log for this revision" icon="history">
+            <ul className="text-[10px] flex flex-col gap-1">
+              {review.exports.map((x, i) => <li key={i}>{new Date(x.at).toLocaleString()} · {x.by} · {x.action} · save {x.saved || "—"}{x.launch ? ` · launch ${x.launch}` : ""}</li>)}
+            </ul>
+          </Card>
+        )}
+        <div className="pb-4" />
       </aside>
 
-      {/* Right Section: Viewport 3D Simulation Engine (55%) */}
-      <div className="flex-1 h-full relative bg-slate-950 flex flex-col overflow-hidden">
-        {/* Top Overlay Status Bar */}
-        <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
-          <div className="flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl shadow-lg pointer-events-auto">
-            <span className={`w-2.5 h-2.5 rounded-full ${isPlaying ? "bg-emerald-400 animate-ping" : "bg-emerald-500"}`}></span>
-            <span className="text-xs font-semibold text-slate-200">
-              RobotStudio API: Synced & Ready
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 bg-slate-900/90 backdrop-blur-md border border-slate-800 px-4 py-2 rounded-xl shadow-lg pointer-events-auto text-xs">
-            <div className="flex items-center gap-1.5 text-slate-300">
-              <span className="text-slate-400 font-mono text-[11px]">CONTROLLER:</span>
-              <span className="font-mono font-bold text-blue-400">IRC5 / OmniCore</span>
-            </div>
-            <div className="h-3 w-px bg-slate-700"></div>
-            <div className="flex items-center gap-1.5 text-slate-300">
-              <span className="text-slate-400 font-mono text-[11px]">TARGETS:</span>
-              <span className="font-mono font-bold text-amber-400">{activePoints.length}</span>
-            </div>
-            <div className="h-3 w-px bg-slate-700"></div>
-            <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold px-2 py-0.5 rounded">
-              PASSED VERIFICATION
-            </span>
-          </div>
+      <div className="flex-1 h-full relative bg-slate-950 flex flex-col overflow-hidden min-w-0">
+        <div className="flex-1 relative min-h-0">
+          <WeldSimulation3D record={record} clock={clock} fallback={<TargetTable record={record} />} />
         </div>
-
-        {/* Realtime 3D Simulation Canvas */}
-        <div className="w-full h-full relative flex-1">
-          <ExecutionViewportCanvas points={activePoints} isPlaying={isPlaying} progressRatio={progressRatio} />
-
-          {/* Floating Bottom Control Bar */}
-          <div className="absolute bottom-6 left-4 right-4 z-10 flex justify-center pointer-events-none">
-            <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-full px-6 py-2.5 flex items-center gap-5 shadow-2xl pointer-events-auto select-none">
-              <button 
-                onClick={() => setIsPlaying(!isPlaying)}
-                className="text-slate-200 hover:text-blue-400 transition-colors flex items-center justify-center p-2 rounded-full hover:bg-slate-800 cursor-pointer"
-                title={isPlaying ? "Pause Execution" : "Test Execution"}
-              >
-                <span className="material-symbols-outlined text-[26px]">
-                  {isPlaying ? "pause" : "play_arrow"}
-                </span>
-              </button>
-
-              <div className="w-56 h-1.5 bg-slate-800 rounded-full overflow-hidden relative cursor-pointer">
-                <div 
-                  className="h-full bg-blue-500 rounded-full transition-all duration-100"
-                  style={{ width: `${progressRatio * 100}%` }}
-                ></div>
-              </div>
-
-              <span className="font-mono text-xs text-slate-300 font-semibold min-w-[85px] text-right">
-                00:{formattedSec} / 00:12
-              </span>
-            </div>
-          </div>
+        <div className="p-3 flex flex-col gap-2">
+          <PlaybackControls clock={clock} record={record} />
+          <div className="bg-surface rounded-xl p-3 max-h-[220px] overflow-auto"><TargetTable record={record} compact caption="Same revision as the module (robot base frame, mm)" /></div>
         </div>
       </div>
-
-      {/* RobotStudio Software Download Dialog Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-5">
-            <div className="flex items-center gap-3 select-none">
-              <div className="w-10 h-10 rounded-lg bg-blue-500/10 text-primary flex items-center justify-center border border-primary/20">
-                <span className="material-symbols-outlined text-2xl font-bold">rocket_launch</span>
-              </div>
-              <div>
-                <h4 className="font-extrabold text-base text-on-surface leading-none">RAPID Module Saved!</h4>
-                <p className="text-[10px] text-on-surface-variant font-extrabold uppercase tracking-widest mt-1.5">ABB RobotStudio Controller Bridge</p>
-              </div>
-            </div>
-
-            <div className="text-xs text-on-surface-variant leading-relaxed flex flex-col gap-3 font-medium">
-              <p>
-                Successfully copied the RAPID code to your system clipboard and saved <strong>{fileName}</strong> to your Downloads folder.
-              </p>
-              <div className="bg-surface-container-low border border-outline-variant/60 p-3 rounded-lg text-on-surface text-[11px] leading-relaxed">
-                <strong>Notice:</strong> To run simulation on a physical controller, please open ABB RobotStudio and load the exported <code>{fileName}</code>.
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2 select-none">
-              <a 
-                href="https://new.abb.com/products/robotics/robotstudio/downloads" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider py-3 rounded-lg text-center transition-colors shadow-sm"
-              >
-                Download RobotStudio
-              </a>
-              <button 
-                onClick={() => setShowModal(false)}
-                className="flex-1 bg-surface hover:bg-surface-container-high border border-outline-variant text-on-surface-variant hover:text-on-surface font-bold text-xs uppercase tracking-wider py-3 rounded-lg transition-colors cursor-pointer"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

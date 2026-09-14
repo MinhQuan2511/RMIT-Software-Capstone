@@ -1,78 +1,73 @@
-const { spawn, execSync } = require('child_process');
+/**
+ * Starts the backend (127.0.0.1:5000) and frontend (127.0.0.1:3000) for local use.
+ *
+ * It checks that both ports are free first and refuses to start otherwise. It
+ * never stops processes it did not start: the previous version killed
+ * whatever held ports 3000/5000, which could terminate unrelated software.
+ * On shutdown it stops only its own child process trees.
+ */
 
-console.log('🚀 Starting VertexDynamics Monorepo (Backend + Frontend)...');
+const { spawn } = require('child_process');
+const net = require('net');
 
-// Helper to free ports before starting services
-const freePort = (port) => {
+const HOST = '127.0.0.1';
+const SERVICES = [
+  { name: 'backend', port: Number(process.env.PORT) || 5000, args: ['--prefix', 'backend', 'run', 'dev'] },
+  { name: 'frontend', port: 3000, args: ['--prefix', 'frontend', 'run', 'dev'] },
+];
+
+function portIsFree(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => probe.close(() => resolve(true)));
+    probe.listen(port, HOST);
+  });
+}
+
+function stopChild(child) {
+  if (!child || child.exitCode !== null || !child.pid) return;
   if (process.platform === 'win32') {
-    try {
-      const output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
-      const lines = output.split('\n');
-      const pids = new Set();
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length >= 5 && (parts[1].endsWith(`:${port}`) || parts[1].includes(`:${port}`))) {
-          const pid = parts[parts.length - 1];
-          if (pid && pid !== '0' && pid !== `${process.pid}`) {
-            pids.add(pid);
-          }
-        }
-      }
-      for (const pid of pids) {
-        console.log(`🧹 Clearing existing process on port ${port} (PID: ${pid})...`);
-        try { execSync(`taskkill /pid ${pid} /F /T`, { stdio: 'ignore' }); } catch {}
-      }
-    } catch {
-      // Ignore if no process is listening on the port
+    // The npm shell wrapper has its own children; stop exactly this tree.
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    child.kill('SIGINT');
+  }
+}
+
+async function main() {
+  for (const s of SERVICES) {
+    if (!(await portIsFree(s.port))) {
+      console.error(`Port ${s.port} on ${HOST} (${s.name}) is already in use. This launcher does not stop other processes; stop that process yourself or free the port, then retry.`);
+      process.exit(1);
     }
   }
-};
 
-// Clear ports 5000 (Backend HTTP) and 3000 (Frontend Next.js)
-[5000, 3000].forEach(freePort);
+  console.log('Starting VertexDynamics (local only): backend http://127.0.0.1:5000/api, frontend http://127.0.0.1:3000');
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  // Fixed arguments only; shell is required to run npm.cmd on Windows.
+  const children = SERVICES.map((s) => ({ ...s, child: spawn(npm, s.args, { stdio: 'inherit', shell: process.platform === 'win32' }) }));
 
-// Use 'run dev' for backend to enable native 'node --watch' auto-reloading
-const backend = spawn('npm', ['--prefix', 'backend', 'run', 'dev'], { stdio: 'inherit', shell: true });
-const frontend = spawn('npm', ['--prefix', 'frontend', 'run', 'dev'], { stdio: 'inherit', shell: true });
+  let exiting = false;
+  const shutdown = (reason, code = 0) => {
+    if (exiting) return;
+    exiting = true;
+    console.log(`\nStopping VertexDynamics services (${reason})...`);
+    children.forEach(({ child }) => stopChild(child));
+    setTimeout(() => process.exit(code), 500);
+  };
 
-let isExiting = false;
+  children.forEach(({ name, child }) => {
+    child.on('exit', (code, signal) => {
+      if (!exiting) {
+        console.error(`${name} exited (code ${code}, signal ${signal}); stopping the other service.`);
+        shutdown(`${name} exited`, code || 1);
+      }
+    });
+  });
 
-// Clean up processes on exit (Prevents port 5000/3000 zombie leaks on Windows)
-const cleanExit = (signal) => {
-  if (isExiting) return;
-  isExiting = true;
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
 
-  console.log(`\n🛑 Shutting down VertexDynamics services (${signal || 'exit'})...`);
-  if (process.platform === 'win32') {
-    try {
-      if (backend.pid) execSync(`taskkill /pid ${backend.pid} /T /F`, { stdio: 'ignore' });
-    } catch {}
-    try {
-      if (frontend.pid) execSync(`taskkill /pid ${frontend.pid} /T /F`, { stdio: 'ignore' });
-    } catch {}
-  } else {
-    try { backend.kill('SIGINT'); } catch {}
-    try { frontend.kill('SIGINT'); } catch {}
-  }
-  process.exit(0);
-};
-
-backend.on('exit', (code, signal) => {
-  if (!isExiting) {
-    console.log(`⚠️ Backend process exited (code: ${code}, signal: ${signal})`);
-  }
-});
-
-frontend.on('exit', (code, signal) => {
-  if (!isExiting) {
-    console.log(`⚠️ Frontend process exited (code: ${code}, signal: ${signal})`);
-  }
-});
-
-process.on('SIGINT', () => cleanExit('SIGINT'));
-process.on('SIGTERM', () => cleanExit('SIGTERM'));
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught exception:', err);
-  cleanExit('uncaughtException');
-});
-
+main();
