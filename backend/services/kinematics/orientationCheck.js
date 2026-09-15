@@ -59,4 +59,51 @@ function recoverOrientationAngles({ quaternion, frame, toolConvention, requested
   return result;
 }
 
-module.exports = { recoverOrientationAngles, DEFAULT_TOLERANCE_DEG };
+const unitv = (v) => { const n = Math.hypot(v[0], v[1], v[2]); return v.map((c) => c / n); };
+const perpTo = (v, t) => v.map((c, i) => c - dot(v, t) * t[i]);
+
+/**
+ * Work and push angles measured against the ACTUAL straight weld path (the
+ * measured chord start → end that the weld MoveL follows), not the declared
+ * joint axis that the planner snaps travel to. The two differ by at most the
+ * seam-to-joint-axis tolerance (0.5°); this reports the difference instead of
+ * hiding it.
+ *
+ * Definitions on the actual path, with t_c = unit(end − start):
+ *   push  τ_c = asin(a · t_c)
+ *   work  θ_c = atan2(b⊥·n̂A, b⊥·n̂B),  b⊥ = b − (b·t_c)t_c,
+ *         n̂A/n̂B = plate normals projected into the plane ⟂ t_c and normalised
+ *   (the projected normals are no longer exactly 90° apart when t_c is not the
+ *   joint axis; that projected angle is reported as projectedPlateAngleDeg).
+ */
+function recoverActualPathAngles({ quaternion, frame, toolConvention, start, end, requested }) {
+  const a = rotateVector(quaternion, AXIS[toolConvention.approachAxis]);
+  const tc = unitv([end[0] - start[0], end[1] - start[1], end[2] - start[2]]);
+  const pushAngleDeg = deg(Math.asin(clamp1(dot(a, tc))));
+  const body = a.map((c) => -c);
+  const bt = perpTo(body, tc);
+  const nA = unitv(perpTo(frame.normalA, tc));
+  const nB = unitv(perpTo(frame.normalB, tc));
+  const workAngleDeg = deg(Math.atan2(dot(bt, nA), dot(bt, nB)));
+  const t = frame.travel;
+  const axisDisagreementDeg = deg(Math.atan2(Math.hypot(...cross(tc, t)), Math.abs(dot(tc, t))));
+  const result = {
+    method: 'stored quaternion applied to the declared approach axis; angles measured against the measured weld chord (the generated MoveL direction)',
+    chordDirection: tc,
+    axisDisagreementDeg,
+    pushAngleDeg,
+    workAngleDeg,
+    projectedPlateAngleDeg: deg(Math.acos(clamp1(dot(nA, nB)))),
+    definitions: {
+      push: 'asin(a · t_chord), positive = tip leans towards travel',
+      work: 'atan2(b⊥·n̂A, b⊥·n̂B) in the plane perpendicular to the chord, normals projected into that plane',
+    },
+  };
+  if (requested) {
+    result.pushDeviationDeg = pushAngleDeg - requested.pushAngleDeg;
+    result.workDeviationDeg = workAngleDeg - requested.workAngleDeg;
+  }
+  return result;
+}
+
+module.exports = { recoverOrientationAngles, recoverActualPathAngles, DEFAULT_TOLERANCE_DEG };

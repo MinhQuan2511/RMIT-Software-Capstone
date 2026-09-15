@@ -20,24 +20,26 @@ function detectWebGL() {
 const noopSubscribe = () => () => {};
 
 /**
- * Browser preview of a canonical revision. The torch follows the playback
- * clock through exact backend targets with the robtarget orientations. This
- * is an illustrative animation, not a kinematic or controller simulation.
+ * Browser preview of a canonical revision: stored plates, stored targets and
+ * segments, stored clearance findings. The torch follows the playback clock
+ * through the stored targets with the stored orientations; MoveJ moves are not
+ * animated along a guessed path. This is a diagnostic animation, not a
+ * kinematic or controller simulation.
  *
  * `fallback` is rendered instead when WebGL is unavailable or the context is
  * lost, so the same data stays visible as a table.
  */
-export default function WeldSimulation3D({ record, clock, showToolAxes = false, fallback = null }) {
+export default function WeldSimulation3D({ record, clock, showToolAxes = false, fallback = null, representation = "transparent", showZones = true, showEnvelope = true, selectedSegment = null }) {
   const mountRef = useRef(null);
   const recordRef = useRef(record);
-  const axesRef = useRef(showToolAxes);
+  const viewRef = useRef({ showToolAxes, representation, showZones, showEnvelope, selectedSegment });
   const [runtimeError, setRuntimeError] = useState(null);
   const supported = useSyncExternalStore(noopSubscribe, detectWebGL, () => null);
 
-  const recordKey = record ? `${record.jobId || "fixture"}#${record.revision || 0}#${record.output ? record.output.sha256 : ""}` : null;
+  const recordKey = record ? `${record.jobId || "fixture"}#${record.revision || 0}#${record.output ? record.output.sha256 : ""}#${record.configurationSha256 || ""}` : null;
 
   useEffect(() => { recordRef.current = record; });
-  useEffect(() => { axesRef.current = showToolAxes; }, [showToolAxes]);
+  useEffect(() => { viewRef.current = { showToolAxes, representation, showZones, showEnvelope, selectedSegment }; }, [showToolAxes, representation, showZones, showEnvelope, selectedSegment]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -55,7 +57,7 @@ export default function WeldSimulation3D({ record, clock, showToolAxes = false, 
     renderer.domElement.style.display = "block";
     container.appendChild(renderer.domElement);
 
-    const built = buildWeldScene({ record: rec });
+    const built = buildWeldScene({ record: rec, representation: viewRef.current.representation });
     const timeline = buildTimeline(rec.path, rec.geometry.arc, clock.snapshot().durationS);
     const controls = new OrbitControls(built.camera, renderer.domElement);
     controls.enableDamping = true;
@@ -80,18 +82,24 @@ export default function WeldSimulation3D({ record, clock, showToolAxes = false, 
     };
     renderer.domElement.addEventListener("webglcontextlost", onContextLost);
 
-    // Pause when the tab is hidden so the preview does not jump on return.
     const onVisibility = () => { if (document.hidden) clock.pause(); };
     document.addEventListener("visibilitychange", onVisibility);
 
+    let applied = {};
     let raf = 0;
     let last = performance.now();
     const frame = (now) => {
       raf = requestAnimationFrame(frame);
       const dt = (now - last) / 1000;
       last = now;
+      const v = viewRef.current;
+      if (v.representation !== applied.representation) built.setRepresentation(v.representation);
+      if (v.selectedSegment !== applied.selectedSegment) built.highlightSegment(v.selectedSegment);
+      built.setZonesVisible(v.showZones);
+      built.setEnvelopeVisible(v.showEnvelope);
+      built.setToolAxesVisible(v.showToolAxes);
+      applied = { ...v };
       const snap = clock.snapshot();
-      built.setToolAxesVisible(axesRef.current);
       built.update(sampleTimeline(timeline, snap.time), { playing: snap.playing, dt });
       controls.update();
       renderer.render(built.scene, built.camera);
@@ -106,8 +114,6 @@ export default function WeldSimulation3D({ record, clock, showToolAxes = false, 
       controls.dispose();
       built.dispose();
       renderer.dispose();
-      // Release the context promptly (React development remounts effects);
-      // this follows full disposal and does not replace it.
       renderer.forceContextLoss();
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };

@@ -8,6 +8,10 @@ import WeldSimulation3D from "@/components/WeldSimulation3D";
 import PlaybackControls from "@/components/PlaybackControls";
 import TargetTable from "@/components/TargetTable";
 import { OrientationSummary, SyntheticBanner } from "@/components/OrientationPanel";
+import ClearancePanel from "@/components/ClearancePanel";
+import { PreviewLegend, SegmentList } from "@/components/PreviewLegend";
+import { workpieceMode } from "@/lib/clearanceView";
+import { describeState } from "@/lib/statusLabels";
 import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useToast } from "@/components/ToastContext";
 import { api } from "@/services/apiClient";
@@ -22,6 +26,10 @@ export default function GeneratePage() {
   const { showToast } = useToast();
   const [clock] = useState(() => createPlaybackClock());
   const [axes, setAxes] = useState(false);
+  const [representation, setRepresentation] = useState("transparent");
+  const [showZones, setShowZones] = useState(true);
+  const [showEnvelope, setShowEnvelope] = useState(true);
+  const [selected, setSelected] = useState({ key: null, index: null });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -30,6 +38,12 @@ export default function GeneratePage() {
   const moduleReviewed = !!review.moduleReview;
   const prechecksOk = gates.validation.applicationPrechecks === "passed";
   const joint = isJointRelative(record);
+  const wp = workpieceMode(record);
+  const revisionKey = `${record.jobId}#${record.revision}`;
+  // A selection belongs to one revision; a newly loaded revision starts unselected.
+  const selectedSegment = selected.key === revisionKey ? selected.index : null;
+  const selectSegment = (index) => setSelected({ key: revisionKey, index });
+  const clearanceState = describeState(gates.validation.workpieceClearance || "not_recorded");
 
   const markReviewed = async () => {
     setBusy(true);
@@ -74,6 +88,7 @@ export default function GeneratePage() {
         </Card>
 
         <OrientationSummary record={record} />
+        <ClearancePanel record={record} onSelectSegment={selectSegment} />
 
         <Card title="Assumptions carried by this module" icon="warning">
           <ul className="list-disc pl-5 text-[11px] flex flex-col gap-1">
@@ -105,22 +120,44 @@ export default function GeneratePage() {
 
       <div className="flex-1 h-full relative bg-slate-950 flex flex-col overflow-hidden min-w-0">
         <div className="absolute top-3 left-3 right-3 z-20 flex flex-wrap gap-2 pointer-events-none text-[11px]">
-          <span className="bg-slate-900/90 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-semibold">Browser preview · illustrative animation</span>
+          <span className="bg-slate-900/90 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-semibold">Browser preview of the stored plan · diagnostic animation, not a controller simulation</span>
+          <span data-testid="workpiece-label" className={`border px-3 py-1.5 rounded-lg font-bold ${wp.mode === "operator_defined" ? "bg-sky-950/90 border-sky-600 text-sky-100" : wp.mode === "illustrative" ? "bg-amber-950/90 border-amber-600 text-amber-100" : "bg-slate-900/90 border-slate-500 text-slate-200"}`}>{wp.label}</span>
           <span className="bg-slate-900/90 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-mono">TOOL {record.profile.toolName}</span>
           <span className="bg-slate-900/90 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-mono">TARGETS {record.path.targetCount} · MOVES {record.path.instructionCount}</span>
-          <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">Reachability: not evaluated (no robot model)</span>
-          <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">
-            {joint
-              ? "Declared joint frame: white = travel, green = plate A normal, amber = plate B normal; magenta = torch axis from the stored quaternions"
-              : record.geometry.plannedType === "straight" ? "Workpiece: illustrative T-joint, not imported CAD" : "No workpiece model shown"}
-          </span>
+          <span data-testid="clearance-label" className="bg-slate-900/90 border border-slate-600 text-slate-200 px-3 py-1.5 rounded-lg">Workpiece clearance: {clearanceState.text}</span>
+          <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">Reachability and robot/cell collision: not evaluated (no robot model)</span>
+          {joint && (
+            <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">
+              Declared joint frame: white = travel, green = plate A normal, amber = plate B normal; magenta arrows = torch axis from the stored quaternions
+            </span>
+          )}
           {joint && <span className="pointer-events-auto"><SyntheticBanner record={record} /></span>}
         </div>
         <div className="flex-1 relative min-h-0">
-          <WeldSimulation3D record={record} clock={clock} showToolAxes={axes} fallback={<TargetTable record={record} />} />
+          <WeldSimulation3D record={record} clock={clock} showToolAxes={axes} representation={representation} showZones={showZones} showEnvelope={showEnvelope} selectedSegment={selectedSegment} fallback={<TargetTable record={record} />} />
         </div>
-        <div className="p-3">
+        <div className="p-3 flex flex-col gap-2 max-h-[48%] overflow-y-auto">
           <PlaybackControls clock={clock} record={record} showToolAxes={axes} onToggleToolAxes={setAxes} />
+          <div className="bg-slate-900/90 border border-slate-700 rounded-2xl px-4 py-2 text-slate-200 flex flex-wrap items-center gap-3 text-[11px]">
+            <label className="flex items-center gap-1">Plates
+              <select aria-label="Plate representation" value={representation} onChange={(e) => setRepresentation(e.target.value)} className="bg-slate-800 border border-slate-600 rounded px-1 py-0.5">
+                <option value="transparent">Transparent (default)</option>
+                <option value="solid">Solid</option>
+                <option value="wireframe">Wireframe</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1"><input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} />Zones</label>
+            <label className="flex items-center gap-1"><input type="checkbox" checked={showEnvelope} onChange={(e) => setShowEnvelope(e.target.checked)} />Torch envelope</label>
+            <span className="text-[10px] text-slate-400">Display options never change the stored clearance results.</span>
+            <details className="basis-full" open>
+              <summary className="cursor-pointer font-bold">Legend</summary>
+              <PreviewLegend record={record} />
+            </details>
+          </div>
+          <div className="bg-surface rounded-xl p-3">
+            <p className="text-[11px] font-bold mb-1">Stored segments (select to highlight)</p>
+            <SegmentList record={record} selected={selectedSegment} onSelect={selectSegment} />
+          </div>
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ import WeldSimulation3D from "@/components/WeldSimulation3D";
 import PlaybackControls from "@/components/PlaybackControls";
 import TargetTable from "@/components/TargetTable";
 import { SyntheticBanner } from "@/components/OrientationPanel";
+import ClearancePanel from "@/components/ClearancePanel";
 import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useToast } from "@/components/ToastContext";
 import { api } from "@/services/apiClient";
@@ -235,6 +236,7 @@ export default function ExportPage() {
         </Card>
 
         <ValidationPanel gates={gates} />
+        <ClearancePanel record={record} />
 
         <Card title="Record RobotStudio evidence (operator-reported)" icon="assignment_turned_in">
           <form onSubmit={submitEvidence} className="grid grid-cols-2 gap-2 text-[11px]">

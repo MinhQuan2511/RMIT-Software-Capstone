@@ -15,6 +15,10 @@ const { canonicalJson, sha256 } = require('../util/hash');
 const { isValidIdentifier, isAllowedSpeed, isAllowedZone } = require('../validation/rapidSyntax');
 const { validateJointSpec, validateAngles, LIMITS: ORIENTATION_LIMITS, TEMPLATES: JOINT_TEMPLATES, PLANNER_VERSION } = require('./jointOrientation');
 const { resolveStation, listStationProfiles } = require('./stationProfiles');
+const { validateWorkpieceDefinition } = require('../geometry/workpiece');
+const { validateToolEnvelope } = require('../geometry/toolEnvelope');
+
+const TRAVERSALS = ['as_measured', 'reversed'];
 
 const CALIBRATION_ID = /^cal_[a-f0-9]{24}$/;
 
@@ -150,10 +154,15 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
   const profileId = parameters.profileId ?? defaultProfileId;
   const base = PROFILES[profileId];
   const isJoint = profileId === JOINT_RELATIVE_FILLET.id;
+  // Seam-descriptor profiles can carry a workpiece, a tool envelope and a traversal choice; point lists cannot.
+  const isFeature = profileId !== POINT_LIST_LINEAR.id;
   // Joint-relative revisions take tool and work-object names from the station profile only.
-  const allowedTop = new Set(isJoint
-    ? ['profileId', 'station', 'joint', 'orientation', 'clearances', 'motion', 'calibrationReference']
-    : ['profileId', 'toolName', 'wobjName', 'clearances', 'motion', 'nearStraightArcPolicy', 'calibrationReference']);
+  const allowedTop = new Set([
+    ...(isJoint
+      ? ['profileId', 'station', 'joint', 'orientation', 'clearances', 'motion', 'calibrationReference']
+      : ['profileId', 'toolName', 'wobjName', 'clearances', 'motion', 'nearStraightArcPolicy', 'calibrationReference']),
+    ...(isFeature ? ['workpiece', 'toolEnvelope', 'traversal'] : []),
+  ]);
   for (const key of Object.keys(parameters)) {
     if (!allowedTop.has(key)) diagnostics.push(diagnostic('PARAM_UNKNOWN', 'error', `Unknown parameter '${key}'${base ? ` for profile '${profileId}'` : ''}.`, { field: key }));
   }
@@ -241,6 +250,24 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
     }
   }
 
+  if (isFeature && base.id !== POINT_LIST_LINEAR.id) {
+    const wp = validateWorkpieceDefinition(parameters.workpiece);
+    diagnostics.push(...wp.diagnostics);
+    if (wp.ok) profile.workpiece = wp.definition;
+    const env = validateToolEnvelope(parameters.toolEnvelope);
+    diagnostics.push(...env.diagnostics.filter((d) => d.severity === 'error'));
+    if (env.ok) {
+      profile.toolEnvelope = env.definition;
+      profile.parameterWarnings = env.diagnostics.filter((d) => d.severity !== 'error');
+    }
+    const traversal = parameters.traversal === undefined ? 'as_measured' : parameters.traversal;
+    if (!TRAVERSALS.includes(traversal)) {
+      diagnostics.push(diagnostic('PARAM_INVALID', 'error', "traversal must be 'as_measured' or 'reversed'.", { field: 'traversal' }));
+    } else {
+      profile.traversal = traversal;
+    }
+  }
+
   if (isJoint) {
     const station = resolveStation(parameters.station);
     diagnostics.push(...station.diagnostics);
@@ -256,6 +283,10 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
       const joint = validateJointSpec(parameters.joint);
       diagnostics.push(...joint.diagnostics);
       if (joint.ok) profile.joint = joint.spec;
+      if (joint.ok && joint.spec.kind === 'workpiece' && !(profile.workpiece && profile.workpiece.kind === 'fillet90_plates')) {
+        diagnostics.push(diagnostic('JOINT_WORKPIECE_REQUIRED', 'error',
+          "joint.kind 'workpiece' takes the plate normals from the declared workpiece, but no fillet workpiece is declared (parameters.workpiece).", { field: 'joint' }));
+      }
     }
     const o = parameters.orientation === undefined ? {} : parameters.orientation;
     if (!o || typeof o !== 'object' || Array.isArray(o)) {
@@ -292,6 +323,9 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
     clearances: profile.clearances,
     motion: profile.motion,
     calibrationReference: profile.calibrationReference,
+    workpiece: profile.workpiece,
+    toolEnvelope: profile.toolEnvelope,
+    traversal: profile.traversal,
   } : {
     profileId: profile.id,
     profileVersion: profile.version,
@@ -301,6 +335,10 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
     motion: profile.motion,
     nearStraightArcPolicy: profile.nearStraightArcPolicy,
     calibrationReference: profile.calibrationReference,
+    // undefined (and therefore omitted from the digest) for point lists.
+    workpiece: profile.workpiece,
+    toolEnvelope: profile.toolEnvelope,
+    traversal: profile.traversal,
   };
   return { ok: true, profile, parameters: effective, parametersSha256: sha256(canonicalJson(effective)), diagnostics };
 }

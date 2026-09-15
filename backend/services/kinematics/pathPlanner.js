@@ -26,8 +26,12 @@ const { diagnostic, hasErrors } = require('../util/errors');
 const {
   normalizeQuaternion, quatMultiply, quatFromAxisAngle, roundQuaternion, quatNorm,
 } = require('../validation/quaternion');
-const { planFilletOrientation, PLANNER_VERSION } = require('./jointOrientation');
-const { recoverOrientationAngles } = require('./orientationCheck');
+const { planFilletOrientation, PLANNER_VERSION, LIMITS: JOINT_LIMITS } = require('./jointOrientation');
+const { recoverOrientationAngles, recoverActualPathAngles, DEFAULT_TOLERANCE_DEG } = require('./orientationCheck');
+const { buildWorkpieceModel, checkSeamOnWorkpiece, jointFrameDeviationDeg, UNKNOWN: UNKNOWN_WORKPIECE, LIMITS: WORKPIECE_LIMITS } = require('../geometry/workpiece');
+
+// Actual-path work/push deviations above this are reported and require acknowledgement (display threshold, not acceptance).
+const ACTUAL_PATH_REPORT_THRESHOLD_DEG = 0.01;
 
 const JOINT_PROFILE_ID = 'joint-relative-fillet';
 
@@ -300,17 +304,39 @@ function planArc(seam, fit, profile, diagnostics) {
  * Straight seam, joint-relative orientation. The joint and tool convention are
  * declarations carried by the profile; the planner never infers them from the seam.
  */
-function planStraightJointRelative(seam, profile, diagnostics) {
+function planStraightJointRelative(seam, profile, diagnostics, workpiece) {
   const chordInfo = straightChord(seam, profile.geometryLimits, diagnostics,
     'The orientation follows the declared joint frame along the seam; offsets follow the planned torch-body direction.');
   if (!chordInfo) return null;
   const { pStart, pEnd, lengthMm, slopeDeg } = chordInfo;
   const { station } = profile;
+  const fromWorkpiece = profile.joint.kind === 'workpiece';
+  if (fromWorkpiece && workpiece.kind !== 'fillet90_plates') {
+    diagnostics.push(diagnostic('JOINT_WORKPIECE_REQUIRED', 'error', "joint.kind 'workpiece' needs a declared fillet workpiece.", { field: 'joint' }));
+    return null;
+  }
+  // Physical plate normals from the workpiece do not follow the travel direction, so reversing travel keeps the wall.
+  const jointForPlanner = fromWorkpiece
+    ? { kind: 'explicit_normals', normalA: workpiece.frame.normalA, normalB: workpiece.frame.normalB }
+    : profile.joint;
   const planned = planFilletOrientation({
-    start: pStart, end: pEnd, joint: profile.joint, toolConvention: station.toolConvention, ...profile.orientationRequest,
+    start: pStart, end: pEnd, joint: jointForPlanner, toolConvention: station.toolConvention, ...profile.orientationRequest,
   });
   diagnostics.push(...planned.diagnostics);
   if (!planned.ok) return null;
+  if (fromWorkpiece) {
+    // No workpiece hash here: the module header must not change when only plate dimensions change.
+    planned.frame.source = 'workpiece_normals';
+    planned.spec = { kind: 'workpiece', resolvedAs: planned.spec };
+  } else if (workpiece.kind === 'fillet90_plates') {
+    const deviationDeg = jointFrameDeviationDeg(workpiece, planned.frame);
+    if (deviationDeg > WORKPIECE_LIMITS.jointConsistencyToleranceDeg) {
+      diagnostics.push(diagnostic('WORKPIECE_JOINT_INCONSISTENT', 'error',
+        `The joint declaration (${planned.frame.source}) gives plate normals ${deviationDeg.toFixed(3)}° from the declared workpiece (tolerance ${WORKPIECE_LIMITS.jointConsistencyToleranceDeg}°). For a travel-relative template this happens when travel is reversed without remapping the wall side. Use joint kind 'workpiece' or correct one declaration; nothing was adjusted.`,
+        { field: 'joint', details: { deviationDeg, template: profile.joint.template || null, traversal: profile.traversal } }));
+      return null;
+    }
+  }
 
   const weldQ = outputQuaternion(planned.quaternion);
   // Independent check on the value that is actually stored and serialised.
@@ -319,6 +345,21 @@ function planStraightJointRelative(seam, profile, diagnostics) {
     diagnostics.push(diagnostic('ORIENTATION_CHECK_FAILED', 'error',
       'The stored quaternion does not reproduce the requested work/push angles within tolerance. Nothing was generated.', { details: recovered }));
     return null;
+  }
+  // The same stored quaternion measured against the actual weld chord rather than the declared axis.
+  const actualPath = {
+    ...recoverActualPathAngles({ quaternion: weldQ, frame: planned.frame, toolConvention: station.toolConvention, start: pStart, end: pEnd, requested: profile.orientationRequest }),
+    controllingTolerances: {
+      declaredAxisRecoveryDeg: { value: DEFAULT_TOLERANCE_DEG, role: 'generation fails (ORIENTATION_CHECK_FAILED) if the stored quaternion does not reproduce the requested angles about the declared joint axis' },
+      seamToJointAxisDeg: { value: profile.joint.kind === 'template' ? null : JOINT_LIMITS.seamAlignmentToleranceDeg, role: 'the plan is rejected (JOINT_SEAM_INCONSISTENT) if the measured chord is further than this from the declared joint axis' },
+      actualPathReportDeg: { value: ACTUAL_PATH_REPORT_THRESHOLD_DEG, role: 'larger actual-path work/push deviations are reported with ORIENTATION_ACTUAL_PATH_DEVIATION and need acknowledgement; they are bounded by the seam-to-axis angle and are not corrected' },
+    },
+  };
+  const maxDeviation = Math.max(Math.abs(actualPath.pushDeviationDeg), Math.abs(actualPath.workDeviationDeg));
+  if (maxDeviation > ACTUAL_PATH_REPORT_THRESHOLD_DEG) {
+    diagnostics.push(diagnostic('ORIENTATION_ACTUAL_PATH_DEVIATION', 'warning',
+      `Measured along the actual weld chord (${actualPath.axisDisagreementDeg.toFixed(3)}° from the declared joint axis) the torch has push ${actualPath.pushAngleDeg.toFixed(3)}° and work ${actualPath.workAngleDeg.toFixed(3)}°, versus the requested ${profile.orientationRequest.pushAngleDeg}° / ${profile.orientationRequest.workAngleDeg}° about the declared axis. Seam positions were not moved.`,
+      { requiresAcknowledgement: true, details: { axisDisagreementDeg: actualPath.axisDisagreementDeg, pushAngleDeg: actualPath.pushAngleDeg, workAngleDeg: actualPath.workAngleDeg } }));
   }
 
   const b = planned.vectors.torchBody;
@@ -367,6 +408,7 @@ function planStraightJointRelative(seam, profile, diagnostics) {
       requested: profile.orientationRequest,
       vectors: planned.vectors,
       recovered: { ...recovered, fromTarget: TARGETS.weldStart, quaternion: weldQ },
+      actualPath,
       appliesTo: 'every target of this straight seam (standby, approach, weld start, weld end, retract)',
       conventions: {
         workAngle: "Transverse-plane angle from plate A's surface towards plate B (45° bisects a 90° joint).",
@@ -391,8 +433,36 @@ const FIT_REASON_CODES = {
  * @param {object} profile  Resolved profile (fixed-base-quaternion)
  * @returns {{ok: boolean, diagnostics: object[], waypoints?: object[], segments?: object[], geometry?: object}}
  */
-function planSeam(seam, profile) {
+function planSeam(measuredSeam, profile) {
   const diagnostics = [];
+  const traversal = profile.traversal || 'as_measured';
+  const workpiece = buildWorkpieceModel(profile.workpiece || UNKNOWN_WORKPIECE);
+  let seam = measuredSeam;
+  if (traversal === 'reversed') {
+    if (measuredSeam.type !== 'straight') {
+      diagnostics.push(diagnostic('TRAVERSAL_REVERSAL_UNSUPPORTED', 'error', 'Reversed traversal is implemented for straight seams only; this arc was not planned.', { field: 'traversal' }));
+      return { ok: false, diagnostics };
+    }
+    seam = { ...measuredSeam, startPoint: measuredSeam.endPoint, endPoint: measuredSeam.startPoint };
+  }
+  const traversalRecord = {
+    mode: traversal,
+    measuredStartPoint: measuredSeam.startPoint,
+    measuredEndPoint: measuredSeam.endPoint,
+    note: traversal === 'reversed' ? 'Targets run from the measured end to the measured start. The seam file is unchanged.' : 'Targets run from the measured start to the measured end.',
+  };
+  if (workpiece.kind !== 'unknown') {
+    if (measuredSeam.type !== 'straight') {
+      diagnostics.push(diagnostic('WORKPIECE_SEAM_TYPE_UNSUPPORTED', 'error', 'A fillet plate workpiece can only be declared for a straight seam; curved joints are not modeled.', { field: 'workpiece' }));
+      return { ok: false, diagnostics };
+    }
+    const contained = checkSeamOnWorkpiece(workpiece, vec(measuredSeam.startPoint), vec(measuredSeam.endPoint));
+    diagnostics.push(...contained.diagnostics);
+    if (!contained.ok) return { ok: false, diagnostics };
+    workpiece.seamContainment = contained.containment;
+  }
+  const attach = (result) => ({ ...result, workpiece, geometry: { ...result.geometry, traversal: traversalRecord } });
+
   if (profile.id === JOINT_PROFILE_ID) {
     if (seam.type !== 'straight') {
       diagnostics.push(diagnostic('ORIENTATION_ARC_UNSUPPORTED', 'error',
@@ -400,9 +470,9 @@ function planSeam(seam, profile) {
         { field: 'profileId' }));
       return { ok: false, diagnostics };
     }
-    const joint = planStraightJointRelative(seam, profile, diagnostics);
+    const joint = planStraightJointRelative(seam, profile, diagnostics, workpiece);
     if (!joint || hasErrors(diagnostics)) return { ok: false, diagnostics };
-    return { ok: true, diagnostics, ...joint };
+    return { ok: true, diagnostics, ...attach(joint) };
   }
   const sourceNorm = quatNorm(profile.weldQuaternionSource);
   if (Math.abs(sourceNorm - 1) > 1e-6) {
@@ -443,7 +513,7 @@ function planSeam(seam, profile) {
 
   if (!result || hasErrors(diagnostics)) return { ok: false, diagnostics };
   if (!result.geometry.conversion) result.geometry.conversion = null;
-  return { ok: true, diagnostics, ...result };
+  return { ok: true, diagnostics, ...attach(result) };
 }
 
 module.exports = { planSeam, TARGETS, OFFSET_CONVENTION, JOINT_OFFSET_CONVENTION, JOINT_PROFILE_ID, lateralNormal, arcMaxZ, pointOnArc };

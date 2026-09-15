@@ -136,12 +136,16 @@ function validateJointSpec(spec) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
     return { ok: false, diagnostics: [problem('JOINT_SPEC_INVALID', 'joint must be an object.', 'joint')] };
   }
-  const allowed = { template: ['kind', 'template', 'referenceNormal'], explicit_normals: ['kind', 'normalA', 'normalB'], explicit_frame: ['kind', 'xAxis', 'yAxis', 'zAxis'] };
+  const allowed = { template: ['kind', 'template', 'referenceNormal'], explicit_normals: ['kind', 'normalA', 'normalB'], explicit_frame: ['kind', 'xAxis', 'yAxis', 'zAxis'], workpiece: ['kind'] };
   if (!allowed[spec.kind]) {
-    return { ok: false, diagnostics: [problem('JOINT_SPEC_INVALID', "joint.kind must be 'template', 'explicit_normals' or 'explicit_frame'.", 'joint.kind')] };
+    return { ok: false, diagnostics: [problem('JOINT_SPEC_INVALID', "joint.kind must be 'template', 'explicit_normals', 'explicit_frame' or 'workpiece'.", 'joint.kind')] };
   }
   for (const k of Object.keys(spec)) if (!allowed[spec.kind].includes(k)) diagnostics.push(problem('JOINT_SPEC_INVALID', `Unknown field joint.${k} for kind '${spec.kind}'.`, `joint.${k}`));
   if (diagnostics.length) return { ok: false, diagnostics };
+
+  // The plate normals come from the declared workpiece (physical, independent of travel direction).
+  // The planner substitutes them as explicit normals; this function cannot resolve them on its own.
+  if (spec.kind === 'workpiece') return { ok: true, spec: { kind: 'workpiece' }, plates: {}, diagnostics };
 
   if (spec.kind === 'template') {
     if (!TEMPLATES[spec.template]) {
@@ -209,6 +213,9 @@ function validateJointSpec(spec) {
 function resolveJointFrame(spec, start, end) {
   const checked = validateJointSpec(spec);
   if (!checked.ok) return { ok: false, diagnostics: checked.diagnostics };
+  if (checked.spec.kind === 'workpiece') {
+    return { ok: false, diagnostics: [problem('JOINT_WORKPIECE_REQUIRED', "joint.kind 'workpiece' takes the plate normals from a declared fillet workpiece; none was supplied to the joint resolver.", 'joint.kind')] };
+  }
   const diagnostics = [];
   const chord = sub(end, start);
   if (!(norm(chord) > 0)) return { ok: false, diagnostics: [problem('GEOMETRY_TOO_SHORT', 'Seam start and end coincide.')] };

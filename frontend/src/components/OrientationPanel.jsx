@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { Card, Icon, StateBadge } from "./StatusPanels";
 import { recomputeOrientation, isJointRelative } from "@/lib/orientationCheck";
-import { AXES, DEFAULT_LIMITS, JOINT_PROFILE_ID, buildJointParameters, draftFromRecord, validateJointDraft } from "@/lib/jointInput";
+import { AXES, DEFAULT_LIMITS, JOINT_PROFILE_ID, buildJointParameters, draftFromRecord, geometryParametersOf, hasFilletWorkpiece, validateJointDraft } from "@/lib/jointInput";
 
 const fmt = (v, dp = 4) => (Number.isFinite(v) ? v.toFixed(dp) : "—");
 const vec = (v) => (Array.isArray(v) ? `[${v.map((c) => fmt(c, 4)).join(", ")}]` : "—");
@@ -55,6 +55,9 @@ export function OrientationSummary({ record }) {
     ["Requested", `work ${fmt(o.requested.workAngleDeg, 3)}° · push ${fmt(o.requested.pushAngleDeg, 3)}°`],
     ["Recovered by the backend", `work ${fmt(rec.workAngleDeg, 6)}° · push ${fmt(rec.pushAngleDeg, 6)}° · roll error ${rec.rollErrorDeg.toExponential(1)}°`],
     ["Recomputed in this browser", browser ? `work ${fmt(browser.workAngleDeg, 6)}° · push ${fmt(browser.pushAngleDeg, 6)}° · ${browser.agrees ? "agrees" : "DOES NOT AGREE"} within ${browser.toleranceDeg}°` : "—"],
+    ...(o.actualPath ? [
+      ["Against the actual weld chord", `work ${fmt(o.actualPath.workAngleDeg, 4)}° · push ${fmt(o.actualPath.pushAngleDeg, 4)}° (chord ${fmt(o.actualPath.axisDisagreementDeg, 4)}° from the declared axis)`],
+    ] : []),
   ];
   return (
     <Card title="Joint-relative orientation (experimental)" icon="explore">
@@ -72,6 +75,7 @@ export function OrientationSummary({ record }) {
           towards the travel direction. Both come from the stored target quaternion; this is a mathematical check, not robot
           verification. RobotStudio validation: not run. Every target of this straight seam holds the same orientation
           {browser && browser.sameOrientationOnAllTargets ? " (confirmed from the stored targets)" : ""}.
+          {o.actualPath ? " The declared-axis check (1e-5°) confirms the stored quaternion; the actual-chord angles differ by at most the seam-to-axis angle (rejected above 0.5°) and are reported, not corrected." : ""}
         </p>
       </div>
     </Card>
@@ -104,7 +108,8 @@ export function JointOrientationForm({ record, profilesData, disabled, busy, onR
   const [touched, setTouched] = useState(false);
   const limits = { ...DEFAULT_LIMITS, ...(profilesData.orientationLimits || {}) };
   const isArc = record.geometry.plannedType === "arc";
-  const errors = mode === "joint" ? validateJointDraft(draft, seamOf(record), limits) : [];
+  const workpieceDeclared = hasFilletWorkpiece(record.parameters);
+  const errors = mode === "joint" ? validateJointDraft(draft, seamOf(record), limits, { workpieceDeclared }) : [];
   const set = (patch) => { setTouched(true); setDraft((d) => ({ ...d, ...patch })); };
   const setDeclared = (patch) => { setTouched(true); setDraft((d) => ({ ...d, declared: { ...d.declared, ...patch } })); };
   const num = (v) => (v === "" ? NaN : Number(v));
@@ -116,6 +121,7 @@ export function JointOrientationForm({ record, profilesData, disabled, busy, onR
     profileId: "fixed-base-quaternion",
     motion: record.parameters.motion,
     ...(record.parameters.calibrationReference ? { calibrationReference: record.parameters.calibrationReference } : {}),
+    ...geometryParametersOf(record.parameters),
   });
   const baseline = isJoint ? JSON.stringify(buildJointParameters(draftFromRecord(record), record)) : null;
   const changed = mode === "legacy" ? isJoint : !isJoint || JSON.stringify(buildJointParameters(draft, record)) !== baseline;
@@ -184,6 +190,7 @@ export function JointOrientationForm({ record, profilesData, disabled, busy, onR
                 <option value="template">Template (90° fillet, relative to the seam)</option>
                 <option value="explicit_normals">Explicit plate normals (pointing into the open weld side)</option>
                 <option value="explicit_frame">Explicit right-handed joint frame (Z = open-side bisector)</option>
+                <option value="workpiece" disabled={!workpieceDeclared}>From the declared workpiece plates{workpieceDeclared ? "" : " — declare a fillet workpiece first"}</option>
               </select>
             </label>
             {draft.jointKind === "template" && (

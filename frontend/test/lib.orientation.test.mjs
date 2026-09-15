@@ -28,7 +28,7 @@ test("joint fixture is synthetic and its stored targets reproduce the requested 
 
 test("3D indicators use the stored joint frame and stored quaternions; no illustrative workpiece; full disposal", () => {
   const s = buildWeldScene({ record: JOINT_RECORD });
-  assert.equal(s.illustrativeWorkpiece, false);
+  assert.equal(s.workpieceMode, "unavailable");
   assert.ok(s.jointFrame);
   const ind = jointIndicators(JOINT_RECORD);
   const byName = (n) => s.jointFrame.children.find((c) => c.name === n);

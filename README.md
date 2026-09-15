@@ -12,7 +12,8 @@ validates them, plans a clearance path, and generates a **candidate motion-only 
 > A downloaded module or evidence package is not approval for physical execution.
 
 Detailed developer documents (API contract, validation guide, test results, performance method, orientation method,
-calibration import, handoffs) are kept as local working documents under `LocalUse/`, which is excluded from version
+calibration import, handoffs), developer tools (browser evidence runs, timing benchmark, fixture generator, review
+bundle), their outputs and the original design mock-ups are kept under `LocalUse/`, which is excluded from version
 control. They are not part of a fresh clone.
 
 ---
@@ -37,7 +38,7 @@ A clone contains **committed** work only. Features developed in a working copy b
 other ports: `PORT=5100 VD_FRONTEND_PORT=3100 npm run dev` (the frontend's API URL and the backend's allowed origins
 follow). Run the services separately with `npm run backend` and `npm run frontend`.
 
-Checks: `npm test` · `npm run lint` · `npm run build` · `npm run check` (all) · `npm run bench`.
+Checks: `npm test` · `npm run lint` · `npm run build` · `npm run check` (all).
 
 Configuration is optional: copy `backend/.env.example` to `backend/.env` and `frontend/.env.example` to
 `frontend/.env.local`. Fonts and icons are bundled locally, so the UI does not need internet access.
@@ -160,6 +161,21 @@ requested and recovered angles, diagnostics and prechecks, the exact module, gen
 `SHA256SUMS`, and a RobotStudio validation sheet marked **NOT RUN**. Check it without the application:
 `node scripts/verify-evidence-package.mjs <package.zip>`.
 
+### Workpiece geometry and clearance diagnostics
+
+- Parse & Map → *Workpiece geometry and torch envelope* declares a finite straight 90° fillet workpiece (tee or corner,
+  wall left or right, dimensions) or leaves it *Workpiece geometry unavailable* (seam-only). Butt, lap, non-90°, curved
+  joints and imported CAD are not implemented. The same card holds a tool-frame torch envelope and **Reverse travel**
+  (plates stay put).
+- The backend stores the plates and runs clearance diagnostics against them. It checks target positions, linear TCP paths
+  and torch capsules with exact distances. MoveJ, MoveC, fly-by corner zones and reorienting moves are reported as
+  *Not assessed*. Statuses are only *Intersection detected*, *No intersection detected in assessed geometry*,
+  *Inconclusive* and *Not assessed*.
+- A definite intersection with **operator-defined** plates blocks download, save and RobotStudio launch
+  (`WORKPIECE_INTERSECTION_DETECTED`); the evidence package keeps the failure. Illustrative plates never assess the real part.
+- The 3D preview draws only the stored plates, targets, segments (dashed = schematic MoveJ), zones, findings and envelope.
+  Method: `LocalUse/4/GEOMETRY_CLEARANCE_METHOD.md` (local working document).
+
 ## 6. Error recovery
 
 | Situation | What you see | What to do |
@@ -170,6 +186,7 @@ requested and recovered angles, diagnostics and prechecks, the exact module, gen
 | "Revision changed" (409) | Another tab created a newer revision | Reload the current revision |
 | Export blocked | List of reasons (demo, synthetic, superseded, acknowledgements, reviews) | Resolve each reason; synthetic revisions use the evidence package |
 | Joint-relative orientation rejected | Diagnostic (for example seam not on the declared joint, left-handed frame, unresolved station) | Correct the declaration; nothing is adjusted automatically |
+| Workpiece rejected or intersection detected | `WORKPIECE_*` diagnostics; export blocked with `WORKPIECE_INTERSECTION_DETECTED` | Correct dimensions, welding side, traversal or stand-offs as a new revision; the evidence package stays available |
 | Save failed / RobotStudio not found | Separate outcome lines (including permission denied) | Create or fix the export folder or set `VD_EXPORT_DIR`; set `VD_ROBOTSTUDIO_EXE`; download still works |
 | Corrupt saved session | Notice that the session was reset | Reopen the project from Projects (stored jobs are unaffected) |
 
@@ -181,6 +198,7 @@ backend/
   routes/apiRoutes.js          HTTP API v2
   services/parsers/            curveParser (Feature.txt), pointListAdapter (Testing mode)
   services/kinematics/         arcFitter, pathPlanner, profiles, jointOrientation, orientationCheck, stationProfiles
+  services/geometry/           workpiece model, tool envelope, exact distance primitives, clearance diagnostics
   services/compiler/           rapidCompiler, rapidPrecheck
   services/jobs/               jobStore (filesystem), jobService (pipeline, gates, evidence packages)
   services/packages/           evidencePackage, zipWriter
@@ -188,34 +206,30 @@ backend/
   services/robotstudio/        exportWriter, launcher
   services/security/           requestGuard (Host/Origin/CSRF, rate limits)
   services/calibration/        rspagReader (archive facts), opencvYaml, calibrationInspector, rigidTransform
-  scripts/benchmark.js         timing benchmark
   test/                        node:test suites
 frontend/
   src/app/                     pages (dashboard route group), layouts, error/loading boundaries
   src/components/              session context, navigation, panels, orientation, calibration import, 3D scene
-  src/lib/                     pure logic: stages, session, playback, projection, view transform, orientation check, joint input, usability log
+  src/lib/                     pure logic: stages, session, playback, projection, view transform, orientation check, joint input, workpiece input, clearance view, usability log
   src/services/apiClient.js    API client (CSRF token, normalised errors)
   public/stations/             archived calibration station (contains licence/backup files; do not redistribute)
   test/                        node:test suites + fixtures generated from the backend
 scripts/
   verify-evidence-package.mjs  independent package verifier
-  runall-lifecycle-check.mjs   start/shutdown check of the dev launcher (temporary data)
-  offline-milestone-browser.mjs, browser-evidence.mjs   browser runs against the built app (optional tooling)
-samples/                       demo seam descriptors
-docs/                          benchmarks (raw JSON) and screenshots
-stitch_vertex_dynamics_scan_to_path_hub/   original static design mockups (not used at runtime)
+samples/                       demo seam descriptors (default watch folder)
 ```
 
 ## 8. Limitations
 
 - Motion only; no welding process data or I/O.
-- No reachability, IK, configuration, singularity, joint-limit or collision analysis.
+- No reachability, IK, configuration, singularity, joint-limit or robot/cell collision analysis. Workpiece clearance
+  diagnostics cover only declared, idealised plates and the assessed motion portions; they are not a collision check.
 - Joint-relative orientation is experimental, straight seams and idealised 90° fillets only, and depends on declared
   joint and tool conventions; the real station's convention is unresolved. Curved joint-relative planning is not
   implemented.
 - Calibration files are inspected, never applied; no calibration is captured or solved.
-- Browser preview interpolation does not reproduce MoveJ joint motion, zone blending or controller orientation
-  interpolation; the 12 s duration is not a cycle time.
+- Browser preview interpolation does not reproduce MoveJ joint motion (MoveJ is drawn as a schematic connector and not
+  animated), zone blending or controller orientation interpolation; the 12 s duration is not a cycle time.
 - Watched folder is polled only while the Acquire page is open.
 - RobotStudio launch only starts a process; importing the module was not verified from the command line.
 - No generated module has been validated in RobotStudio or on hardware as part of this software work.

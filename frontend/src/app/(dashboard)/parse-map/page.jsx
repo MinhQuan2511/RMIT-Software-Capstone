@@ -8,6 +8,8 @@ import TargetTable from "@/components/TargetTable";
 import ReviewPanel from "@/components/ReviewPanel";
 import MotionProfileForm from "@/components/MotionProfileForm";
 import { JointOrientationForm, OrientationSummary } from "@/components/OrientationPanel";
+import WorkpieceEditor from "@/components/WorkpieceEditor";
+import ClearancePanel from "@/components/ClearancePanel";
 import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useToast } from "@/components/ToastContext";
 import { api } from "@/services/apiClient";
@@ -33,6 +35,8 @@ function GeometryCard({ record }) {
       ["Plane tilt", `${n(a.planeTiltDeg)}°`],
     ] : []),
     ...(g.conversion ? [["Conversion", `arc → straight, max deviation ${n(g.conversion.maxChordDeviationMm, 4)} mm`]] : []),
+    ...(g.traversal ? [["Traversal", g.traversal.mode === "reversed" ? "reversed: measured end → measured start" : "as measured"]] : []),
+    ["Workpiece", record.workpiece ? `${record.workpiece.label}${record.workpiece.arrangement ? ` (${record.workpiece.arrangement})` : ""}` : "not recorded"],
     ["Units / frame", `${record.coordinates.units} (${record.coordinates.unitsProvenance}) · ${record.coordinates.frame} (${record.coordinates.frameProvenance})`],
     ...(g.homeZ ? [["Standby Z", `${g.homeZ.formula}: ${n(g.homeZ.maxWeldZMm, 3)} + ${g.homeZ.homeLiftMm} mm`]] : []),
     ...(g.standby ? [["Standby", `${g.standby.formula}: ${g.standby.homeStandoffMm} mm`]] : []),
@@ -99,7 +103,8 @@ export default function ParseMapPage() {
             <li className="flex justify-between"><span>Geometry checks</span><StateBadge value={gates.validation.geometry} /></li>
             <li className="flex justify-between"><span>Orientation (mathematical check)</span><StateBadge value={gates.validation.orientationCheck} /></li>
             <li className="flex justify-between"><span>Application prechecks on the module</span><StateBadge value={gates.validation.applicationPrechecks} /></li>
-            <li className="flex justify-between"><span>Reachability / collision</span><StateBadge value="not_evaluated" /></li>
+            <li className="flex justify-between gap-2"><span>Workpiece clearance (modeled plates only)</span><StateBadge value={gates.validation.workpieceClearance || "not_recorded"} /></li>
+            <li className="flex justify-between"><span>Reachability / robot and cell collision</span><StateBadge value="not_evaluated" /></li>
           </ul>
         </Card>
         <Card title="Diagnostics" icon="report">
@@ -110,6 +115,9 @@ export default function ParseMapPage() {
         <InlineError error={reprocessError} onRetry={reprocessError && reprocessError.status === 409 ? reloadJob : null} />
         {profiles.data && record.mode === "file_import" && (
           <JointOrientationForm key={`orient-${record.jobId}#${record.revision}`} record={record} profilesData={profiles.data} disabled={!gates.isLatest} busy={busy} onReprocess={reprocess} />
+        )}
+        {profiles.data && record.mode === "file_import" && (
+          <WorkpieceEditor key={`wp-${record.jobId}#${record.revision}`} record={record} profilesData={profiles.data} disabled={!gates.isLatest} busy={busy} onReprocess={reprocess} />
         )}
         {profiles.data && (
           <MotionProfileForm key={`${record.jobId}#${record.revision}`} record={record} speeds={profiles.data.speeds} zones={profiles.data.zones} disabled={!gates.isLatest} busy={busy} onReprocess={reprocess} />
@@ -123,6 +131,7 @@ export default function ParseMapPage() {
             <Toolpath25D record={record} />
           </div>
           <OrientationSummary record={record} />
+          <ClearancePanel record={record} />
           <GeometryCard record={record} />
           <div className="bg-surface/95 border border-outline-variant/40 rounded-xl p-4 shadow-lg">
             <TargetTable record={record} />

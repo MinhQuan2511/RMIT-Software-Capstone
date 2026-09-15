@@ -57,6 +57,51 @@ function canonical(v) {
   return JSON.stringify(v);
 }
 
+const CLEARANCE_STATUSES = new Set(["intersection_detected", "no_intersection_detected_in_assessed_geometry", "inconclusive", "not_assessed"]);
+
+/**
+ * Format @2 adds workpiece geometry, tool envelope and clearance diagnostics.
+ * Checks that they are bound to this revision's identity, use only the scoped
+ * status vocabulary, never report a pass without geometry, and that a definite
+ * intersection with operator-defined plates is recorded as an export block.
+ */
+function verifyClearance(entries, manifest, id, check) {
+  if (manifest.format === "vd-offline-evidence-package@1") { check("clearance_files_not_in_format_1", true, "older package format without clearance records"); return; }
+  const need = ["geometry/workpiece.json", "geometry/tool-envelope.json", "clearance/clearance.json"];
+  const missing = need.filter((n) => !entries.has(n));
+  check("clearance_files_present", missing.length === 0, missing.length ? missing : undefined);
+  if (missing.length) return;
+  let wp; let env; let doc; let review;
+  try {
+    wp = JSON.parse(entries.get("geometry/workpiece.json").toString("utf8"));
+    env = JSON.parse(entries.get("geometry/tool-envelope.json").toString("utf8"));
+    doc = JSON.parse(entries.get("clearance/clearance.json").toString("utf8"));
+    review = JSON.parse(entries.get("checks/operator-review.json").toString("utf8"));
+  } catch (err) { check("clearance_files_parse", false, err.message); return; }
+  const c = doc.clearance;
+  const s = manifest.statuses && manifest.statuses.workpieceClearance;
+  if (!c) {
+    check("clearance_not_recorded_is_not_a_pass", doc.status === "not_recorded" && s && s.result === "not_recorded" && s.realWorkpiece === "not_assessed");
+    return;
+  }
+  check("workpiece_definition_digest_recomputed", sha(canonical(wp.definition)) === wp.definitionSha256 && wp.definitionSha256 === c.geometry.definitionSha256 && wp.definitionSha256 === id.workpieceDefinitionSha256, wp.definitionSha256);
+  check("tool_envelope_digest_recomputed", sha(canonical(env.definition)) === env.sha256 && env.sha256 === c.toolEnvelope.definitionSha256 && env.sha256 === id.toolEnvelopeSha256, env.sha256);
+  check("clearance_bound_to_output_and_configuration", c.identity.outputSha256 === id.outputSha256 && c.identity.configurationSha256 === id.configurationSha256);
+  const statusValues = [c.overall.result, c.overall.realWorkpiece, ...Object.values(c.categories)];
+  const walk = (o) => { if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) { if (k === "result" && typeof v === "string") statusValues.push(v); else walk(v); } };
+  walk(c.targets); walk(c.segments); walk(c.findings);
+  const bad = [...new Set(statusValues.filter((v) => !CLEARANCE_STATUSES.has(v)))];
+  check("clearance_statuses_in_scoped_vocabulary", bad.length === 0, bad.length ? bad : undefined);
+  const provenance = c.overall.geometryProvenance;
+  check("unknown_or_illustrative_geometry_not_assessed_for_real_workpiece", provenance === "operator_defined" || c.overall.realWorkpiece === "not_assessed");
+  check("unknown_geometry_never_clear", provenance !== "unknown" || c.overall.result === "not_assessed");
+  check("manifest_clearance_status_matches_record", s && s.result === c.overall.result && s.realWorkpiece === c.overall.realWorkpiece && s.geometryProvenance === provenance);
+  const blocked = (review.gatesAtPackageTime.export.reasons || []).some((r) => r.code === "WORKPIECE_INTERSECTION_DETECTED");
+  const shouldBlock = provenance === "operator_defined" && c.overall.result === "intersection_detected";
+  check("definite_intersection_recorded_as_export_block", blocked === shouldBlock, { shouldBlock, blocked });
+  check("findings_retained", c.overall.result !== "intersection_detected" || c.findings.some((f) => f.result === "intersection_detected"));
+}
+
 export function verifyPackage(buf) {
   const checks = [];
   const check = (id, ok, detail) => checks.push({ id, ok: !!ok, ...(detail !== undefined ? { detail } : {}) });
@@ -115,6 +160,8 @@ export function verifyPackage(buf) {
   } catch (err) {
     check("validation_files", false, err.message);
   }
+
+  verifyClearance(entries, manifest, id, check);
 
   const text = names.map((n) => entries.get(n).toString("latin1")).join("\n");
   check("no_absolute_windows_or_home_paths", !/[A-Za-z]:\\(Users|Windows|Program Files)|\/home\/|\/Users\//.test(text));

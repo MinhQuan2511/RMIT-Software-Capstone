@@ -23,6 +23,16 @@ const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a
 const norm = (v) => Math.hypot(v[0], v[1], v[2]);
 const unit = (v) => v.map((c) => c / norm(v));
 
+/** Workpiece, tool envelope and traversal of a stored revision, re-sent unchanged by forms that edit other parameters. */
+export function geometryParametersOf(parameters) {
+  const out = {};
+  if (!parameters) return out;
+  for (const key of ["workpiece", "toolEnvelope", "traversal"]) if (parameters[key] !== undefined) out[key] = parameters[key];
+  return out;
+}
+
+export const hasFilletWorkpiece = (parameters) => !!(parameters && parameters.workpiece && parameters.workpiece.kind === "fillet90_plates");
+
 export function defaultJointDraft() {
   return {
     stationId: "",
@@ -76,7 +86,7 @@ function vectorProblem(v, label) {
  * @param {object} [limits]
  * @returns {string[]} problems (empty when valid)
  */
-export function validateJointDraft(draft, seam = null, limits = DEFAULT_LIMITS) {
+export function validateJointDraft(draft, seam = null, limits = DEFAULT_LIMITS, context = {}) {
   const e = [];
   if (!draft.stationId) e.push("Choose a station/tool profile.");
   if (draft.stationId === "operator-declared") {
@@ -130,6 +140,8 @@ export function validateJointDraft(draft, seam = null, limits = DEFAULT_LIMITS) 
       if ([dot(x, y), dot(y, z), dot(x, z)].some((d) => Math.abs(d) > maxDot)) e.push("Frame axes must be mutually perpendicular.");
       else if (dot(cross(x, y), z) < 0) e.push("The frame is left-handed (X × Y points opposite Z).");
     }
+  } else if (draft.jointKind === "workpiece") {
+    if (!context.workpieceDeclared) e.push("Joint from the workpiece needs a declared fillet workpiece (workpiece editor).");
   } else {
     e.push("Choose how the joint is declared.");
   }
@@ -152,8 +164,10 @@ export function buildJointParameters(draft, record) {
     ? { kind: "template", template: draft.template, referenceNormal: draft.referenceNormal }
     : draft.jointKind === "explicit_normals"
       ? { kind: "explicit_normals", normalA: draft.normalA, normalB: draft.normalB }
-      : { kind: "explicit_frame", xAxis: draft.xAxis, yAxis: draft.yAxis, zAxis: draft.zAxis };
-  const params = { profileId: JOINT_PROFILE_ID, station, joint, orientation: { workAngleDeg: draft.workAngleDeg, pushAngleDeg: draft.pushAngleDeg } };
+      : draft.jointKind === "workpiece"
+        ? { kind: "workpiece" }
+        : { kind: "explicit_frame", xAxis: draft.xAxis, yAxis: draft.yAxis, zAxis: draft.zAxis };
+  const params = { profileId: JOINT_PROFILE_ID, station, joint, orientation: { workAngleDeg: draft.workAngleDeg, pushAngleDeg: draft.pushAngleDeg }, ...geometryParametersOf(record && record.parameters) };
   const p = record && record.parameters;
   if (p && p.profileId === JOINT_PROFILE_ID) {
     params.clearances = p.clearances;

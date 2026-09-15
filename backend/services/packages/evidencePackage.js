@@ -19,7 +19,14 @@
 const { sha256 } = require('../util/hash');
 const { createZip } = require('./zipWriter');
 
-const PACKAGE_FORMAT = 'vd-offline-evidence-package@1';
+const PACKAGE_FORMAT = 'vd-offline-evidence-package@2';
+
+/** Scoped clearance summary for the manifest and validation sheet ('not_recorded' for revisions stored before clearance records). */
+function clearanceStatus(record) {
+  const c = record.clearance;
+  if (!c) return { result: 'not_recorded', geometryProvenance: 'not_recorded', realWorkpiece: 'not_assessed', blocksExport: false, methodVersion: null };
+  return { result: c.overall.result, geometryProvenance: c.overall.geometryProvenance, realWorkpiece: c.overall.realWorkpiece, blocksExport: c.overall.blocksExport, methodVersion: c.methodVersion, scope: c.scope };
+}
 
 const json = (o) => `${JSON.stringify(o, null, 2)}\n`;
 
@@ -45,6 +52,8 @@ function validationSheet({ record, identity, synthetic }) {
     ['Joint declaration', joint],
     ['Requested work / push angle', angles],
     ['Application orientation check', check],
+    ['Workpiece geometry', record.workpiece ? `${record.workpiece.label} (${record.workpiece.kind}${record.workpiece.arrangement ? `, ${record.workpiece.arrangement}` : ''})` : 'not recorded'],
+    ['Application workpiece-clearance diagnostics (modeled plates only; not a collision check)', (() => { const s = clearanceStatus(record); return `${s.result}; real workpiece: ${s.realWorkpiece}`; })()],
     ['Date / reviewer', ''],
     ['RobotStudio version', ''],
     ['RobotWare version / virtual controller', ''],
@@ -167,6 +176,23 @@ function buildEvidencePackage({ job, record, review, gates, sourceMeta, sourceCo
     geometry: record.geometry,
   }));
   put('orientation/orientation.json', json({ label: 'mathematical check, not robot verified', orientation: record.orientation || null }));
+  put('geometry/workpiece.json', json(record.workpiece ? {
+    label: record.workpiece.label,
+    provenance: record.workpiece.provenance,
+    definitionSha256: record.workpiece.definitionSha256,
+    digestMethod: 'SHA-256 of the canonical JSON of "definition" (keys sorted recursively, no whitespace).',
+    definition: record.workpiece.definition,
+    model: record.workpiece,
+  } : { status: 'not_recorded', note: 'This revision was stored before workpiece records existed; geometry is unknown.' }));
+  put('geometry/tool-envelope.json', json(record.toolEnvelope ? {
+    sha256: record.toolEnvelope.sha256,
+    digestMethod: 'SHA-256 of the canonical JSON of "definition".',
+    definition: record.toolEnvelope.definition,
+    note: 'Capsules in the tool frame. A synthetic envelope never describes a real torch; unknown means torch-body checks were not assessed.',
+  } : { status: 'not_recorded' }));
+  put('clearance/clearance.json', json(record.clearance
+    ? { label: 'application workpiece-clearance diagnostics for the modeled plates only; not a robot, cell or collision validation', clearance: record.clearance }
+    : { status: 'not_recorded', note: 'This revision was stored before clearance records existed. Nothing was assessed.' }));
   put('checks/diagnostics.json', json({
     diagnostics: record.diagnostics,
     requiredAcknowledgements: record.requiredAcknowledgements,
@@ -210,6 +236,9 @@ function buildEvidencePackage({ job, record, review, gates, sourceMeta, sourceCo
       configurationDerived: identity.derived,
       outputSha256: record.output.sha256,
       moduleFile: 'module/Module1.mod',
+      workpieceDefinitionSha256: record.workpiece ? record.workpiece.definitionSha256 : null,
+      toolEnvelopeSha256: record.toolEnvelope ? record.toolEnvelope.sha256 : null,
+      clearanceMethodVersion: record.clearance ? record.clearance.methodVersion : null,
     },
     hashDefinitions: {
       sourceSha256: 'SHA-256 of input/source.* (the imported bytes)',
@@ -225,6 +254,8 @@ function buildEvidencePackage({ job, record, review, gates, sourceMeta, sourceCo
       physicalDryRun: 'NOT RUN',
       controllerConnection: 'not_integrated',
       calibration: calibration ? 'referenced for provenance; not applied; physical calibration not validated' : 'not referenced; not applied',
+      workpieceClearance: clearanceStatus(record),
+      robotOrCellCollision: 'NOT RUN',
     },
     synthetic,
     files: files.map((f) => ({ path: f.name, bytes: f.data.length, sha256: sha256(f.data) })),
@@ -246,4 +277,4 @@ function buildEvidencePackage({ job, record, review, gates, sourceMeta, sourceCo
   };
 }
 
-module.exports = { buildEvidencePackage, PACKAGE_FORMAT };
+module.exports = { buildEvidencePackage, PACKAGE_FORMAT, clearanceStatus };

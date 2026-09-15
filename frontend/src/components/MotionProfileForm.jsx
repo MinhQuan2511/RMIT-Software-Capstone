@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { Card, Icon } from "./StatusPanels";
-import { JOINT_PROFILE_ID, buildJointParameters, draftFromRecord } from "@/lib/jointInput";
+import { JOINT_PROFILE_ID, buildJointParameters, draftFromRecord, geometryParametersOf } from "@/lib/jointInput";
 
 const CLEARANCE_LABELS = {
   approachBackoffMm: "Approach back-off",
@@ -51,7 +51,8 @@ export default function MotionProfileForm({ record, speeds, zones, disabled, onR
     return e;
   }, [draft, isJoint]);
 
-  const changed = JSON.stringify(draft) !== JSON.stringify(base);
+  // Only fields this form edits count as a change (workpiece and envelope are edited in their own card).
+  const changed = ["toolName", "wobjName", "clearances", "motion", "nearStraightArcPolicy"].some((k) => JSON.stringify(draft[k]) !== JSON.stringify(base[k]));
   const setClear = (k, v) => { setTouched(true); setDraft((d) => ({ ...d, clearances: { ...d.clearances, [k]: v === "" ? NaN : Number(v) } })); };
   const setMotion = (k, f, v) => { setTouched(true); setDraft((d) => ({ ...d, motion: { ...d.motion, [k]: { ...d.motion[k], [f]: v } } })); };
 
@@ -65,6 +66,8 @@ export default function MotionProfileForm({ record, speeds, zones, disabled, onR
     if (!isPoints) { parameters.clearances = draft.clearances; parameters.nearStraightArcPolicy = draft.nearStraightArcPolicy; }
     if (isPoints) parameters.profileId = "point-list-linear";
     if (base.calibrationReference) parameters.calibrationReference = base.calibrationReference;
+    // The declared workpiece, envelope and traversal belong to the revision; editing motion keeps them.
+    if (!isPoints) Object.assign(parameters, geometryParametersOf(base));
     onReprocess(parameters);
   };
 

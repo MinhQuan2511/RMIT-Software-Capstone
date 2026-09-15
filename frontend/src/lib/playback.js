@@ -104,6 +104,10 @@ export function sampleTimeline(timeline, timeS) {
     position = arcPoint(seg.arc, fraction * sweep);
     const vf = seg.viaFraction;
     quaternion = fraction <= vf ? slerp(seg.fromQ, seg.viaQ, vf > 0 ? fraction / vf : 1) : slerp(seg.viaQ, seg.toQ, vf < 1 ? (fraction - vf) / (1 - vf) : 1);
+  } else if (seg.instruction === "MoveJ") {
+    // Joint-space motion: the real TCP path is unknown, so the torch is not animated along a guessed line.
+    position = fraction < 1 ? seg.fromPos : seg.toPos;
+    quaternion = fraction < 1 ? seg.fromQ : seg.toQ;
   } else {
     position = lerp3(seg.fromPos, seg.toPos, fraction);
     quaternion = slerp(seg.fromQ, seg.toQ, fraction);
@@ -116,7 +120,9 @@ export function sampleTimeline(timeline, timeS) {
   }
   const inWeld = seg.role === "weld" && time > seg.t0 && time < seg.t1;
   const before = timeline.hasWeld && seg.index < timeline.segments[timeline.weldIndex].index;
-  const phaseLabel = seg.role === "air" && timeline.hasWeld ? (before ? "Move to approach" : "Return to home") : PHASE_LABEL[seg.role] || seg.role;
+  const phaseLabel = seg.instruction === "MoveJ" && seg.from
+    ? "Joint move: path not animated (unknown)"
+    : seg.role === "air" && timeline.hasWeld ? (before ? "Move to approach" : "Return to home") : PHASE_LABEL[seg.role] || seg.role;
 
   return { time, segmentIndex: seg.index, role: seg.role, instruction: seg.instruction, fraction, position, quaternion, weldFraction, inWeld, phaseLabel };
 }

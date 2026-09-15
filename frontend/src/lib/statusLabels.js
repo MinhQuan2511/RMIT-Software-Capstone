@@ -3,6 +3,8 @@
  * so status never depends on colour alone.
  */
 
+import { CLEARANCE_STATES } from "./clearanceView.js";
+
 export const VALIDATION_ROWS = [
   { key: "input", label: "Input / schema" },
   { key: "geometry", label: "Geometry checks" },
@@ -16,7 +18,8 @@ export const VALIDATION_ROWS = [
   { key: "controllerConnection", label: "Controller connection" },
   { key: "physicalCommissioning", label: "Physical commissioning" },
   { key: "reachability", label: "Reachability / IK" },
-  { key: "collision", label: "Collision checking" },
+  { key: "workpieceClearance", label: "Workpiece clearance (modeled plates only)" },
+  { key: "collision", label: "Robot / cell collision checking" },
   { key: "singularities", label: "Singularity / joint limits" },
 ];
 
@@ -47,6 +50,9 @@ const STATE = {
   not_validated: { text: "Not validated — no calibration evidence", tone: "neutral", icon: "help_outline" },
   disabled: { text: "Disabled", tone: "neutral", icon: "block" },
   ambiguous_multiple_4x4_matrices: { text: "Ambiguous — several 4×4 matrices", tone: "bad", icon: "help" },
+  ...CLEARANCE_STATES,
+  assessed: { text: "Assessed", tone: "info", icon: "done" },
+  partially_assessed: { text: "Partially assessed", tone: "pending", icon: "rule" },
 };
 
 export const PROVENANCE_LABEL = {

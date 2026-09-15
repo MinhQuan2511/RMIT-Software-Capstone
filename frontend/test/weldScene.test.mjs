@@ -31,11 +31,15 @@ test("T21 scene: markers sit at the exact backend targets (including the arc via
     });
     s.dispose();
   }
+  // No hard-coded workpiece: without a stored workpiece the preview is seam-only.
   const straight = buildWeldScene({ record: STRAIGHT_RECORD });
-  assert.equal(straight.illustrativeWorkpiece, true);
+  assert.equal(straight.workpieceMode, "unavailable");
+  assert.equal(straight.workpieceLabel, "Workpiece geometry unavailable");
+  assert.equal(straight.workpieceGroup, null);
+  assert.ok(straight.seamFrame);
   straight.dispose();
   const arc = buildWeldScene({ record: ARC_RECORD });
-  assert.equal(arc.illustrativeWorkpiece, false, "no T-joint implied for a curved seam");
+  assert.equal(arc.workpieceMode, "unavailable", "no joint implied for a curved seam");
   arc.dispose();
 });
 

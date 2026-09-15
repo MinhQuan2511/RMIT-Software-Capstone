@@ -17,6 +17,9 @@ const { inspectCalibrationFile } = require('../services/calibration/calibrationI
 const { SPEEDS, ZONES } = require('../services/validation/rapidSyntax');
 const { displayName, SOURCE_PROVENANCE } = require('../services/jobs/jobStore');
 const { operatorName } = require('../services/jobs/jobService');
+const workpieceSchema = require('../services/geometry/workpiece');
+const toolEnvelopeSchema = require('../services/geometry/toolEnvelope');
+const clearanceMethod = require('../services/geometry/clearance');
 
 const CALIBRATION_MAX_BYTES = 64 * 1024;
 
@@ -119,6 +122,13 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
     rollReferences: ROLL_REFERENCES,
     orientationLimits: ORIENTATION_LIMITS,
     sourceProvenance: SOURCE_PROVENANCE,
+    workpiece: {
+      schema: workpieceSchema.SCHEMA, coordinateFrame: workpieceSchema.COORDINATE_FRAME, limits: workpieceSchema.LIMITS,
+      labels: workpieceSchema.LABELS, arrangements: workpieceSchema.ARRANGEMENTS, unsupportedKinds: workpieceSchema.UNSUPPORTED_KINDS,
+    },
+    toolEnvelope: { schema: toolEnvelopeSchema.SCHEMA, limits: toolEnvelopeSchema.LIMITS, syntheticZApproach: toolEnvelopeSchema.SYNTHETIC_Z_APPROACH },
+    clearance: { methodVersion: clearanceMethod.METHOD_VERSION, tolerances: clearanceMethod.TOLERANCES, statuses: clearanceMethod.STATUS, zones: clearanceMethod.ZONES },
+    traversals: ['as_measured', 'reversed'],
   }));
 
   // ---- projects -----------------------------------------------------------
