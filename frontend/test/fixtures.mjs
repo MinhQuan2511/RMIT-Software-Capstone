@@ -7,6 +7,53 @@ export const STRAIGHT_RECORD = {
     "kind": "demo",
     "displayName": "Feature_Straight_Sample.txt"
   },
+  "parameters": {
+    "profileId": "fixed-base-quaternion",
+    "profileVersion": 1,
+    "toolName": "tWeldGun",
+    "wobjName": "wobj0",
+    "clearances": {
+      "approachBackoffMm": 25,
+      "approachLateralMm": 35,
+      "approachLiftMm": 45,
+      "retractForwardMm": 20,
+      "retractLateralMm": 35,
+      "retractLiftMm": 45,
+      "homeLateralMm": 60,
+      "homeLiftMm": 350
+    },
+    "motion": {
+      "home": {
+        "speed": "v100",
+        "zone": "z100"
+      },
+      "approach": {
+        "speed": "v60",
+        "zone": "z10"
+      },
+      "weldStart": {
+        "speed": "v100",
+        "zone": "fine"
+      },
+      "weld": {
+        "speed": "v100",
+        "zone": "fine"
+      },
+      "retract": {
+        "speed": "v80",
+        "zone": "z10"
+      },
+      "returnHome": {
+        "speed": "v100",
+        "zone": "fine"
+      }
+    },
+    "nearStraightArcPolicy": "reject"
+  },
+  "profile": {
+    "id": "fixed-base-quaternion",
+    "version": 1
+  },
   "geometry": {
     "requestedType": "straight",
     "plannedType": "straight",
@@ -35,6 +82,7 @@ export const STRAIGHT_RECORD = {
     "offsetConvention": "XY components of the 3D unit travel tangent scaled by the back-off/forward distance; lateral offset along the tangent turned +90° about Z in the XY plane; scalar Z lift. Not collision-checked.",
     "conversion": null
   },
+  "orientation": null,
   "path": {
     "waypoints": [
       {
@@ -224,6 +272,53 @@ export const ARC_RECORD = {
     "sha256": "7992b54e5a7f64107a891b83ef11c8d32b0d72d1323035da37d7e7de2a57e716",
     "kind": "demo",
     "displayName": "Feature_Arc_Sample.txt"
+  },
+  "parameters": {
+    "profileId": "fixed-base-quaternion",
+    "profileVersion": 1,
+    "toolName": "tWeldGun",
+    "wobjName": "wobj0",
+    "clearances": {
+      "approachBackoffMm": 25,
+      "approachLateralMm": 35,
+      "approachLiftMm": 45,
+      "retractForwardMm": 20,
+      "retractLateralMm": 35,
+      "retractLiftMm": 45,
+      "homeLateralMm": 60,
+      "homeLiftMm": 350
+    },
+    "motion": {
+      "home": {
+        "speed": "v100",
+        "zone": "z100"
+      },
+      "approach": {
+        "speed": "v60",
+        "zone": "z10"
+      },
+      "weldStart": {
+        "speed": "v100",
+        "zone": "fine"
+      },
+      "weld": {
+        "speed": "v100",
+        "zone": "fine"
+      },
+      "retract": {
+        "speed": "v80",
+        "zone": "z10"
+      },
+      "returnHome": {
+        "speed": "v100",
+        "zone": "fine"
+      }
+    },
+    "nearStraightArcPolicy": "reject"
+  },
+  "profile": {
+    "id": "fixed-base-quaternion",
+    "version": 1
   },
   "geometry": {
     "requestedType": "arc",
@@ -529,6 +624,7 @@ export const ARC_RECORD = {
     "offsetConvention": "XY components of the 3D unit travel tangent scaled by the back-off/forward distance; lateral offset along the tangent turned +90° about Z in the XY plane; scalar Z lift. Not collision-checked.",
     "conversion": null
   },
+  "orientation": null,
   "path": {
     "waypoints": [
       {
@@ -732,5 +828,409 @@ export const ARC_RECORD = {
   },
   "output": {
     "sha256": "45e748b1fb5486493f1a147c40930ccbdad1ebb23e9f6608a04ad38c58ab9471"
+  }
+};
+
+// SYNTHETIC joint-relative fixture (synthetic seam + synthetic station profile).
+export const JOINT_RECORD = {
+  "mode": "file_import",
+  "source": {
+    "id": "src_demo_000000000000000000000000",
+    "sha256": "a6d3f1114e992049cc90c9792a56f0d7b04d79868843ed8dac1bae4cd335b105",
+    "kind": "demo",
+    "displayName": "synthetic_fillet_fixture.txt"
+  },
+  "parameters": {
+    "profileId": "joint-relative-fillet",
+    "profileVersion": 1,
+    "toolName": "tSYNTH_Z_APPROACH",
+    "wobjName": "wobjSYNTH",
+    "station": {
+      "schema": "vd-station-profile@1",
+      "validationState": "not_validated",
+      "id": "synthetic-tool-z-approach",
+      "version": 1,
+      "label": "SYNTHETIC fixture: tool +Z approach, +X roll towards travel",
+      "provenance": "synthetic_fixture",
+      "description": "Invented for offline mathematical tests. Not the convention of any real torch.",
+      "toolName": "tSYNTH_Z_APPROACH",
+      "wobjName": "wobjSYNTH",
+      "toolConvention": {
+        "approachAxis": "+Z",
+        "rollAxis": "+X",
+        "rollReference": "travel"
+      },
+      "tcp": {
+        "status": "not_physical",
+        "translationMm": null,
+        "note": "Synthetic profile; no TCP exists or is used."
+      },
+      "workObjectDefinition": "synthetic: positions are treated as robot-base coordinates",
+      "unresolved": [
+        "everything physical: this is a synthetic fixture"
+      ],
+      "exportPolicy": "offline_evidence_package_only",
+      "digestSha256": "c5969fb5f3d93300ab30200bb97df339d61a21224a0caf2eb1df555dd20d29fe"
+    },
+    "joint": {
+      "kind": "template",
+      "template": "fillet90_wall_left",
+      "referenceNormal": [
+        0,
+        0,
+        1
+      ]
+    },
+    "orientation": {
+      "workAngleDeg": 45,
+      "pushAngleDeg": 10
+    },
+    "clearances": {
+      "approachStandoffMm": 60,
+      "retractStandoffMm": 60,
+      "homeStandoffMm": 350
+    },
+    "motion": {
+      "home": {
+        "speed": "v100",
+        "zone": "z100"
+      },
+      "approach": {
+        "speed": "v60",
+        "zone": "z10"
+      },
+      "weldStart": {
+        "speed": "v100",
+        "zone": "fine"
+      },
+      "weld": {
+        "speed": "v100",
+        "zone": "fine"
+      },
+      "retract": {
+        "speed": "v80",
+        "zone": "z10"
+      },
+      "returnHome": {
+        "speed": "v100",
+        "zone": "fine"
+      }
+    }
+  },
+  "profile": {
+    "id": "joint-relative-fillet",
+    "version": 1
+  },
+  "geometry": {
+    "requestedType": "straight",
+    "plannedType": "straight",
+    "startPoint": {
+      "x": 400,
+      "y": 100,
+      "z": 300
+    },
+    "endPoint": {
+      "x": 600,
+      "y": 100,
+      "z": 300
+    },
+    "viaPoint": null,
+    "seamWidthMm": 5,
+    "seamWidthProvenance": "file",
+    "chordLengthMm": 200,
+    "lengthMm": 200,
+    "slopeDeg": 0,
+    "arc": null,
+    "homeZ": null,
+    "standby": {
+      "formula": "chord midpoint + homeStandoffMm along the torch-body direction",
+      "homeStandoffMm": 350
+    },
+    "offsetConvention": "Approach = weld start + approachStandoffMm·b; retract = weld end + retractStandoffMm·b; standby = chord midpoint + homeStandoffMm·b, where b is the planned unit torch-body direction (from the wire tip back up the torch). Every target holds the planned weld orientation. Not collision-checked.",
+    "conversion": null
+  },
+  "orientation": {
+    "mode": "joint_relative_straight_fillet",
+    "plannerVersion": "vd-joint-orientation@1",
+    "experimental": true,
+    "jointSpec": {
+      "kind": "template",
+      "template": "fillet90_wall_left",
+      "referenceNormal": [
+        0,
+        0,
+        1
+      ]
+    },
+    "jointFrame": {
+      "travel": [
+        1,
+        0,
+        0
+      ],
+      "normalA": [
+        0,
+        0,
+        1
+      ],
+      "normalB": [
+        0,
+        -1,
+        0
+      ],
+      "openBisector": [
+        0,
+        -0.7071067811865475,
+        0.7071067811865475
+      ],
+      "handedness": "nA×nB=+travel",
+      "plateAngleDeg": 90,
+      "seamToJointAxisDeg": 0,
+      "orthogonalityResidualDeg": 0,
+      "referenceDeviationDeg": 0,
+      "frameXAlignment": null,
+      "source": "template:fillet90_wall_left",
+      "plateLabels": {
+        "A": "floor",
+        "B": "wall"
+      }
+    },
+    "toolConvention": {
+      "approachAxis": "+Z",
+      "rollAxis": "+X",
+      "rollReference": "travel"
+    },
+    "station": {
+      "id": "synthetic-tool-z-approach",
+      "version": 1,
+      "provenance": "synthetic_fixture",
+      "label": "SYNTHETIC fixture: tool +Z approach, +X roll towards travel"
+    },
+    "requested": {
+      "workAngleDeg": 45,
+      "pushAngleDeg": 10
+    },
+    "vectors": {
+      "approach": [
+        0.17364817766693033,
+        0.696364240320019,
+        -0.6963642403200189
+      ],
+      "torchBody": [
+        -0.17364817766693033,
+        -0.696364240320019,
+        0.6963642403200189
+      ],
+      "rollReference": [
+        0.9848077530122082,
+        -0.12278780396897286,
+        0.12278780396897285
+      ]
+    },
+    "recovered": {
+      "method": "mathematical check: stored quaternion applied to the declared tool axes; angles measured against the declared joint frame",
+      "workAngleDeg": 45.00000004271057,
+      "pushAngleDeg": 10.000000024663509,
+      "rollErrorDeg": 2.0659222984654253e-8,
+      "openSide": true,
+      "toleranceDeg": 0.00001,
+      "workAngleErrorDeg": 4.2710567527137755e-8,
+      "pushAngleErrorDeg": 2.4663508568778525e-8,
+      "status": "mathematical_check_passed",
+      "fromTarget": "Target_40",
+      "quaternion": [
+        0.381227206,
+        -0.920363892,
+        0.033353059,
+        -0.080521407
+      ]
+    },
+    "appliesTo": "every target of this straight seam (standby, approach, weld start, weld end, retract)",
+    "conventions": {
+      "workAngle": "Transverse-plane angle from plate A's surface towards plate B (45° bisects a 90° joint).",
+      "pushAngle": "Signed angle of the torch body from the transverse plane; positive = push (tip leans towards travel start→end).",
+      "roll": "Declared roll axis along travel (or against it) projected perpendicular to the approach axis.",
+      "quaternion": "ABB order [w,x,y,z]; sign chosen with w ≥ 0."
+    }
+  },
+  "path": {
+    "waypoints": [
+      {
+        "name": "home",
+        "type": "home",
+        "pos": [
+          439.2231,
+          -143.7275,
+          543.7275
+        ],
+        "orient": [
+          0.381227206,
+          -0.920363892,
+          0.033353059,
+          -0.080521407
+        ],
+        "conf": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "speed": "v100",
+        "zone": "z100"
+      },
+      {
+        "name": "Target_30",
+        "type": "approach",
+        "pos": [
+          389.5811,
+          58.2181,
+          341.7819
+        ],
+        "orient": [
+          0.381227206,
+          -0.920363892,
+          0.033353059,
+          -0.080521407
+        ],
+        "conf": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "speed": "v60",
+        "zone": "z10"
+      },
+      {
+        "name": "Target_40",
+        "type": "weld_start",
+        "pos": [
+          400,
+          100,
+          300
+        ],
+        "orient": [
+          0.381227206,
+          -0.920363892,
+          0.033353059,
+          -0.080521407
+        ],
+        "conf": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "speed": "v100",
+        "zone": "fine"
+      },
+      {
+        "name": "Target_20_5",
+        "type": "weld_end",
+        "pos": [
+          600,
+          100,
+          300
+        ],
+        "orient": [
+          0.381227206,
+          -0.920363892,
+          0.033353059,
+          -0.080521407
+        ],
+        "conf": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "speed": "v100",
+        "zone": "fine"
+      },
+      {
+        "name": "Target_20",
+        "type": "retract",
+        "pos": [
+          589.5811,
+          58.2181,
+          341.7819
+        ],
+        "orient": [
+          0.381227206,
+          -0.920363892,
+          0.033353059,
+          -0.080521407
+        ],
+        "conf": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "speed": "v80",
+        "zone": "z10"
+      }
+    ],
+    "segments": [
+      {
+        "index": 0,
+        "instruction": "MoveJ",
+        "role": "air",
+        "from": null,
+        "to": "home",
+        "speed": "v100",
+        "zone": "z100"
+      },
+      {
+        "index": 1,
+        "instruction": "MoveL",
+        "role": "air",
+        "from": "home",
+        "to": "Target_30",
+        "speed": "v60",
+        "zone": "z10"
+      },
+      {
+        "index": 2,
+        "instruction": "MoveL",
+        "role": "approach",
+        "from": "Target_30",
+        "to": "Target_40",
+        "speed": "v100",
+        "zone": "fine"
+      },
+      {
+        "index": 3,
+        "instruction": "MoveL",
+        "role": "weld",
+        "from": "Target_40",
+        "to": "Target_20_5",
+        "speed": "v100",
+        "zone": "fine"
+      },
+      {
+        "index": 4,
+        "instruction": "MoveL",
+        "role": "retract",
+        "from": "Target_20_5",
+        "to": "Target_20",
+        "speed": "v80",
+        "zone": "z10"
+      },
+      {
+        "index": 5,
+        "instruction": "MoveL",
+        "role": "air",
+        "from": "Target_20",
+        "to": "home",
+        "speed": "v100",
+        "zone": "fine"
+      }
+    ],
+    "targetCount": 5,
+    "instructionCount": 6
+  },
+  "output": {
+    "sha256": "51178a8e2f02ad89814729d6df09bace6e39b50e25086e341f9979ea0e7e903d"
   }
 };

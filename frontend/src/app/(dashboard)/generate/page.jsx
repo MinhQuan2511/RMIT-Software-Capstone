@@ -7,10 +7,13 @@ import RAPIDCodeEditor from "@/components/RAPIDCodeEditor";
 import WeldSimulation3D from "@/components/WeldSimulation3D";
 import PlaybackControls from "@/components/PlaybackControls";
 import TargetTable from "@/components/TargetTable";
+import { OrientationSummary, SyntheticBanner } from "@/components/OrientationPanel";
 import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useToast } from "@/components/ToastContext";
 import { api } from "@/services/apiClient";
 import { createPlaybackClock } from "@/lib/playback";
+import { isJointRelative } from "@/lib/orientationCheck";
+import { usabilityLog } from "@/lib/usabilityLog";
 import { Card, Icon, InlineError, JobIdentityCard, StateBadge, ValidationPanel } from "@/components/StatusPanels";
 
 export default function GeneratePage() {
@@ -26,6 +29,7 @@ export default function GeneratePage() {
   const { record, review, gates } = job;
   const moduleReviewed = !!review.moduleReview;
   const prechecksOk = gates.validation.applicationPrechecks === "passed";
+  const joint = isJointRelative(record);
 
   const markReviewed = async () => {
     setBusy(true);
@@ -33,6 +37,7 @@ export default function GeneratePage() {
     try {
       const view = await api.review(record.jobId, record.revision, "module", operator);
       applyJobView(view);
+      usabilityLog.record("module_reviewed", { revision: record.revision, profileId: record.profile.id });
       showToast("Module reviewed", `Revision ${record.revision} module review recorded.`, "success");
       router.push("/export");
     } catch (err) {
@@ -68,12 +73,15 @@ export default function GeneratePage() {
           <p className="text-[10px] text-on-surface-variant mt-2">These re-read the generated text for the structure this application emits. Whether a specific RobotWare controller accepts the module is established only by importing it there.</p>
         </Card>
 
+        <OrientationSummary record={record} />
+
         <Card title="Assumptions carried by this module" icon="warning">
           <ul className="list-disc pl-5 text-[11px] flex flex-col gap-1">
             <li>{record.profile.description}</li>
             <li>{record.profile.toolDeclaration}</li>
             {record.profile.configurationNote && <li>{record.profile.configurationNote}</li>}
             {record.profile.clearancesNote && <li>Approach, retract and standby offsets: {record.profile.clearancesNote}</li>}
+            {joint && <li>The joint frame and tool-axis convention are declarations. The orientation has passed a mathematical check only.</li>}
             <li>Motion only: no arc ignition, wire feed, gas or other I/O instructions.</li>
           </ul>
         </Card>
@@ -101,7 +109,12 @@ export default function GeneratePage() {
           <span className="bg-slate-900/90 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-mono">TOOL {record.profile.toolName}</span>
           <span className="bg-slate-900/90 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-mono">TARGETS {record.path.targetCount} · MOVES {record.path.instructionCount}</span>
           <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">Reachability: not evaluated (no robot model)</span>
-          <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">{record.geometry.plannedType === "straight" ? "Workpiece: illustrative T-joint, not imported CAD" : "No workpiece model shown"}</span>
+          <span className="bg-slate-900/90 border border-slate-600 text-slate-300 px-3 py-1.5 rounded-lg">
+            {joint
+              ? "Declared joint frame: white = travel, green = plate A normal, amber = plate B normal; magenta = torch axis from the stored quaternions"
+              : record.geometry.plannedType === "straight" ? "Workpiece: illustrative T-joint, not imported CAD" : "No workpiece model shown"}
+          </span>
+          {joint && <span className="pointer-events-auto"><SyntheticBanner record={record} /></span>}
         </div>
         <div className="flex-1 relative min-h-0">
           <WeldSimulation3D record={record} clock={clock} showToolAxes={axes} fallback={<TargetTable record={record} />} />

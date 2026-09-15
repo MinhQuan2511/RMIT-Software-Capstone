@@ -26,6 +26,10 @@ const { diagnostic, hasErrors } = require('../util/errors');
 const {
   normalizeQuaternion, quatMultiply, quatFromAxisAngle, roundQuaternion, quatNorm,
 } = require('../validation/quaternion');
+const { planFilletOrientation, PLANNER_VERSION } = require('./jointOrientation');
+const { recoverOrientationAngles } = require('./orientationCheck');
+
+const JOINT_PROFILE_ID = 'joint-relative-fillet';
 
 const TARGETS = Object.freeze({
   home: 'home', approach: 'Target_30', weldStart: 'Target_40', weldVia: 'Target_45', weldEnd: 'Target_20_5', retract: 'Target_20',
@@ -34,6 +38,13 @@ const TARGETS = Object.freeze({
 const OFFSET_CONVENTION =
   'XY components of the 3D unit travel tangent scaled by the back-off/forward distance; lateral offset along the ' +
   'tangent turned +90° about Z in the XY plane; scalar Z lift. Not collision-checked.';
+
+// The legacy lateral offset is not joint-aware (for a wall on the left of travel it
+// points into the wall), so the joint-relative profile offsets along the torch body.
+const JOINT_OFFSET_CONVENTION =
+  'Approach = weld start + approachStandoffMm·b; retract = weld end + retractStandoffMm·b; standby = chord midpoint + ' +
+  'homeStandoffMm·b, where b is the planned unit torch-body direction (from the wire tip back up the torch). Every ' +
+  'target holds the planned weld orientation. Not collision-checked.';
 
 const round4 = (n) => { const r = parseFloat(n.toFixed(4)); return Object.is(r, -0) ? 0 : r; };
 const vec = (p) => [p.x, p.y, p.z];
@@ -114,8 +125,8 @@ function arcMaxZ(fit) {
   return best;
 }
 
-function planStraight(seam, profile, diagnostics, extraGeometry = {}) {
-  const limits = profile.geometryLimits;
+/** Length and slope checks shared by every straight-seam plan; null when rejected. */
+function straightChord(seam, limits, diagnostics, slopeNote) {
   const pStart = vec(seam.startPoint);
   const pEnd = vec(seam.endPoint);
   const chord = sub(pEnd, pStart);
@@ -137,10 +148,16 @@ function planStraight(seam, profile, diagnostics, extraGeometry = {}) {
     return null;
   }
   if (slopeDeg > 0.5) {
-    diagnostics.push(diagnostic('GEOMETRY_SLOPED_SEAM', 'info',
-      `Seam slope is ${slopeDeg.toFixed(2)}°. Approach/retract use the XY part of the travel tangent plus a vertical lift, so the back-off is shortened by cos(slope).`,
-      { details: { slopeDeg } }));
+    diagnostics.push(diagnostic('GEOMETRY_SLOPED_SEAM', 'info', `Seam slope is ${slopeDeg.toFixed(2)}°. ${slopeNote}`, { details: { slopeDeg } }));
   }
+  return { pStart, pEnd, lengthMm, dir, slopeDeg, minHorizontal };
+}
+
+function planStraight(seam, profile, diagnostics, extraGeometry = {}) {
+  const chordInfo = straightChord(seam, profile.geometryLimits, diagnostics,
+    'Approach/retract use the XY part of the travel tangent plus a vertical lift, so the back-off is shortened by cos(slope).');
+  if (!chordInfo) return null;
+  const { pStart, pEnd, lengthMm, dir, slopeDeg, minHorizontal } = chordInfo;
 
   const weldQ = outputQuaternion(profile.weldQuaternionSource);
   const homeQ = outputQuaternion(profile.homeQuaternionSource);
@@ -279,6 +296,88 @@ function planArc(seam, fit, profile, diagnostics) {
   };
 }
 
+/**
+ * Straight seam, joint-relative orientation. The joint and tool convention are
+ * declarations carried by the profile; the planner never infers them from the seam.
+ */
+function planStraightJointRelative(seam, profile, diagnostics) {
+  const chordInfo = straightChord(seam, profile.geometryLimits, diagnostics,
+    'The orientation follows the declared joint frame along the seam; offsets follow the planned torch-body direction.');
+  if (!chordInfo) return null;
+  const { pStart, pEnd, lengthMm, slopeDeg } = chordInfo;
+  const { station } = profile;
+  const planned = planFilletOrientation({
+    start: pStart, end: pEnd, joint: profile.joint, toolConvention: station.toolConvention, ...profile.orientationRequest,
+  });
+  diagnostics.push(...planned.diagnostics);
+  if (!planned.ok) return null;
+
+  const weldQ = outputQuaternion(planned.quaternion);
+  // Independent check on the value that is actually stored and serialised.
+  const recovered = recoverOrientationAngles({ quaternion: weldQ, frame: planned.frame, toolConvention: station.toolConvention, requested: profile.orientationRequest });
+  if (recovered.status !== 'mathematical_check_passed') {
+    diagnostics.push(diagnostic('ORIENTATION_CHECK_FAILED', 'error',
+      'The stored quaternion does not reproduce the requested work/push angles within tolerance. Nothing was generated.', { details: recovered }));
+    return null;
+  }
+
+  const b = planned.vectors.torchBody;
+  const c = profile.clearances;
+  const along = (p, d) => p.map((v, i) => round4(v + d * b[i]));
+  const mid = [0, 1, 2].map((i) => (pStart[i] + pEnd[i]) / 2);
+  const m = profile.motion;
+  const conf = profile.configuration;
+  // One orientation for the whole straight seam, so no quaternion sign changes between targets.
+  const waypoints = [
+    waypoint(TARGETS.home, 'home', along(mid, c.homeStandoffMm), weldQ.slice(), conf, m.home),
+    waypoint(TARGETS.approach, 'approach', along(pStart, c.approachStandoffMm), weldQ.slice(), conf, m.approach),
+    waypoint(TARGETS.weldStart, 'weld_start', pStart.map(round4), weldQ.slice(), conf, m.weldStart),
+    waypoint(TARGETS.weldEnd, 'weld_end', pEnd.map(round4), weldQ.slice(), conf, m.weld),
+    waypoint(TARGETS.retract, 'retract', along(pEnd, c.retractStandoffMm), weldQ.slice(), conf, m.retract),
+  ];
+
+  return {
+    waypoints,
+    segments: buildSegments(profile, 'MoveL'),
+    geometry: {
+      requestedType: seam.type,
+      plannedType: 'straight',
+      startPoint: seam.startPoint,
+      endPoint: seam.endPoint,
+      viaPoint: null,
+      seamWidthMm: seam.seamWidthMm,
+      seamWidthProvenance: seam.seamWidthProvenance,
+      chordLengthMm: lengthMm,
+      lengthMm,
+      slopeDeg,
+      arc: null,
+      homeZ: null,
+      standby: { formula: 'chord midpoint + homeStandoffMm along the torch-body direction', homeStandoffMm: c.homeStandoffMm },
+      offsetConvention: JOINT_OFFSET_CONVENTION,
+      conversion: null,
+    },
+    orientation: {
+      mode: 'joint_relative_straight_fillet',
+      plannerVersion: PLANNER_VERSION,
+      experimental: true,
+      jointSpec: planned.spec,
+      jointFrame: planned.frame,
+      toolConvention: station.toolConvention,
+      station: { id: station.id, version: station.version, provenance: station.provenance, label: station.label },
+      requested: profile.orientationRequest,
+      vectors: planned.vectors,
+      recovered: { ...recovered, fromTarget: TARGETS.weldStart, quaternion: weldQ },
+      appliesTo: 'every target of this straight seam (standby, approach, weld start, weld end, retract)',
+      conventions: {
+        workAngle: "Transverse-plane angle from plate A's surface towards plate B (45° bisects a 90° joint).",
+        pushAngle: 'Signed angle of the torch body from the transverse plane; positive = push (tip leans towards travel start→end).',
+        roll: 'Declared roll axis along travel (or against it) projected perpendicular to the approach axis.',
+        quaternion: 'ABB order [w,x,y,z]; sign chosen with w ≥ 0.',
+      },
+    },
+  };
+}
+
 const FIT_REASON_CODES = {
   coincident_points: ['ARC_COINCIDENT_POINTS', 'Two of the three arc points coincide (closer than the minimum separation). This is invalid input and is not treated as a line.'],
   collinear_points: ['ARC_COLLINEAR_POINTS', 'The three arc points are collinear, so no circle passes through them. Correct the via point or describe the seam as a straight curve: line.'],
@@ -294,6 +393,17 @@ const FIT_REASON_CODES = {
  */
 function planSeam(seam, profile) {
   const diagnostics = [];
+  if (profile.id === JOINT_PROFILE_ID) {
+    if (seam.type !== 'straight') {
+      diagnostics.push(diagnostic('ORIENTATION_ARC_UNSUPPORTED', 'error',
+        'Joint-relative orientation is implemented for straight seams only. This arc was not planned and no fixed orientation was substituted; use the fixed-base-quaternion profile for arcs.',
+        { field: 'profileId' }));
+      return { ok: false, diagnostics };
+    }
+    const joint = planStraightJointRelative(seam, profile, diagnostics);
+    if (!joint || hasErrors(diagnostics)) return { ok: false, diagnostics };
+    return { ok: true, diagnostics, ...joint };
+  }
   const sourceNorm = quatNorm(profile.weldQuaternionSource);
   if (Math.abs(sourceNorm - 1) > 1e-6) {
     diagnostics.push(diagnostic('PROFILE_QUATERNION_NORMALIZED', 'info',
@@ -336,4 +446,4 @@ function planSeam(seam, profile) {
   return { ok: true, diagnostics, ...result };
 }
 
-module.exports = { planSeam, TARGETS, OFFSET_CONVENTION, lateralNormal, arcMaxZ, pointOnArc };
+module.exports = { planSeam, TARGETS, OFFSET_CONVENTION, JOINT_OFFSET_CONVENTION, JOINT_PROFILE_ID, lateralNormal, arcMaxZ, pointOnArc };

@@ -7,9 +7,11 @@ import Toolpath25D from "@/components/Toolpath25D";
 import TargetTable from "@/components/TargetTable";
 import ReviewPanel from "@/components/ReviewPanel";
 import MotionProfileForm from "@/components/MotionProfileForm";
+import { JointOrientationForm, OrientationSummary } from "@/components/OrientationPanel";
 import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useToast } from "@/components/ToastContext";
 import { api } from "@/services/apiClient";
+import { usabilityLog } from "@/lib/usabilityLog";
 import { Card, DiagnosticsList, InlineError, JobIdentityCard, StateBadge } from "@/components/StatusPanels";
 
 const n = (v, dp = 2) => (Number.isFinite(v) ? v.toFixed(dp) : "—");
@@ -33,6 +35,8 @@ function GeometryCard({ record }) {
     ...(g.conversion ? [["Conversion", `arc → straight, max deviation ${n(g.conversion.maxChordDeviationMm, 4)} mm`]] : []),
     ["Units / frame", `${record.coordinates.units} (${record.coordinates.unitsProvenance}) · ${record.coordinates.frame} (${record.coordinates.frameProvenance})`],
     ...(g.homeZ ? [["Standby Z", `${g.homeZ.formula}: ${n(g.homeZ.maxWeldZMm, 3)} + ${g.homeZ.homeLiftMm} mm`]] : []),
+    ...(g.standby ? [["Standby", `${g.standby.formula}: ${g.standby.homeStandoffMm} mm`]] : []),
+    ...(record.coordinates.calibrationReference ? [["Calibration file", `${record.coordinates.calibrationReference.displayName} referenced for provenance; not applied`]] : []),
   ];
   if (g.plannedType === "point_list") {
     rows.splice(0, rows.length,
@@ -71,6 +75,7 @@ export default function ParseMapPage() {
     try {
       const view = await api.reprocess(record.jobId, record.revision, parameters);
       applyJobView(view);
+      if (!view.reused) usabilityLog.record("revision_created", { revision: view.record.revision, profileId: view.record.profile.id });
       showToast(view.reused ? "No change" : `Revision ${view.record.revision} created`, view.reused ? "These parameters match the current revision." : "Review the new geometry; earlier reviews do not carry over.", view.reused ? "info" : "success");
     } catch (err) {
       setReprocessError(err);
@@ -92,6 +97,7 @@ export default function ParseMapPage() {
           <ul className="flex flex-col gap-1 text-[11px]">
             <li className="flex justify-between"><span>Input / schema</span><StateBadge value={gates.validation.input} /></li>
             <li className="flex justify-between"><span>Geometry checks</span><StateBadge value={gates.validation.geometry} /></li>
+            <li className="flex justify-between"><span>Orientation (mathematical check)</span><StateBadge value={gates.validation.orientationCheck} /></li>
             <li className="flex justify-between"><span>Application prechecks on the module</span><StateBadge value={gates.validation.applicationPrechecks} /></li>
             <li className="flex justify-between"><span>Reachability / collision</span><StateBadge value="not_evaluated" /></li>
           </ul>
@@ -102,6 +108,9 @@ export default function ParseMapPage() {
         <ReviewPanel nextPath="/generate" />
         {profiles.error && <InlineError error={profiles.error} />}
         <InlineError error={reprocessError} onRetry={reprocessError && reprocessError.status === 409 ? reloadJob : null} />
+        {profiles.data && record.mode === "file_import" && (
+          <JointOrientationForm key={`orient-${record.jobId}#${record.revision}`} record={record} profilesData={profiles.data} disabled={!gates.isLatest} busy={busy} onReprocess={reprocess} />
+        )}
         {profiles.data && (
           <MotionProfileForm key={`${record.jobId}#${record.revision}`} record={record} speeds={profiles.data.speeds} zones={profiles.data.zones} disabled={!gates.isLatest} busy={busy} onReprocess={reprocess} />
         )}
@@ -113,6 +122,7 @@ export default function ParseMapPage() {
           <div className="bg-surface/95 border border-outline-variant/40 rounded-xl p-4 shadow-lg">
             <Toolpath25D record={record} />
           </div>
+          <OrientationSummary record={record} />
           <GeometryCard record={record} />
           <div className="bg-surface/95 border border-outline-variant/40 rounded-xl p-4 shadow-lg">
             <TargetTable record={record} />

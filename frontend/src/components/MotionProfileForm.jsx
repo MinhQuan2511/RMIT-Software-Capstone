@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { Card, Icon } from "./StatusPanels";
+import { JOINT_PROFILE_ID, buildJointParameters, draftFromRecord } from "@/lib/jointInput";
 
 const CLEARANCE_LABELS = {
   approachBackoffMm: "Approach back-off",
@@ -12,6 +13,9 @@ const CLEARANCE_LABELS = {
   retractLiftMm: "Retract lift",
   homeLateralMm: "Standby lateral",
   homeLiftMm: "Standby lift above weld",
+  approachStandoffMm: "Approach stand-off along torch",
+  retractStandoffMm: "Retract stand-off along torch",
+  homeStandoffMm: "Standby stand-off along torch",
 };
 
 const MOTION_LABELS = {
@@ -35,25 +39,32 @@ export default function MotionProfileForm({ record, speeds, zones, disabled, onR
   const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(base)));
   const [touched, setTouched] = useState(false);
   const isPoints = record.profile.id === "point-list-linear";
+  const isJoint = record.profile.id === JOINT_PROFILE_ID;
 
   const errors = useMemo(() => {
     const e = [];
-    if (!/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(draft.toolName || "")) e.push("Tool name must be a RAPID identifier.");
-    if (!/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(draft.wobjName || "")) e.push("Work object name must be a RAPID identifier.");
+    if (!isJoint && !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(draft.toolName || "")) e.push("Tool name must be a RAPID identifier.");
+    if (!isJoint && !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(draft.wobjName || "")) e.push("Work object name must be a RAPID identifier.");
     for (const [k, v] of Object.entries(draft.clearances || {})) {
-      if (!Number.isFinite(v) || v < 0 || v > 1000) e.push(`${CLEARANCE_LABELS[k]} must be 0–1000 mm.`);
+      if (!Number.isFinite(v) || v < 0 || v > 1000) e.push(`${CLEARANCE_LABELS[k] || k} must be 0–1000 mm.`);
     }
     return e;
-  }, [draft]);
+  }, [draft, isJoint]);
 
   const changed = JSON.stringify(draft) !== JSON.stringify(base);
   const setClear = (k, v) => { setTouched(true); setDraft((d) => ({ ...d, clearances: { ...d.clearances, [k]: v === "" ? NaN : Number(v) } })); };
   const setMotion = (k, f, v) => { setTouched(true); setDraft((d) => ({ ...d, motion: { ...d.motion, [k]: { ...d.motion[k], [f]: v } } })); };
 
   const submit = () => {
+    if (isJoint) {
+      // Station, joint and angles are re-sent in request form (not the stored snapshot).
+      onReprocess({ ...buildJointParameters(draftFromRecord(record), record), clearances: draft.clearances, motion: draft.motion });
+      return;
+    }
     const parameters = { toolName: draft.toolName, wobjName: draft.wobjName, motion: draft.motion };
     if (!isPoints) { parameters.clearances = draft.clearances; parameters.nearStraightArcPolicy = draft.nearStraightArcPolicy; }
     if (isPoints) parameters.profileId = "point-list-linear";
+    if (base.calibrationReference) parameters.calibrationReference = base.calibrationReference;
     onReprocess(parameters);
   };
 
@@ -66,20 +77,26 @@ export default function MotionProfileForm({ record, speeds, zones, disabled, onR
       </p>
 
       <fieldset disabled={disabled || busy} className="flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-2">
-          <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wide flex flex-col gap-1">Tool name
-            <input value={draft.toolName} onChange={(e) => { setTouched(true); setDraft({ ...draft, toolName: e.target.value }); }} className="font-mono text-xs bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5 normal-case" />
-          </label>
-          <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wide flex flex-col gap-1">Work object
-            <input value={draft.wobjName} onChange={(e) => { setTouched(true); setDraft({ ...draft, wobjName: e.target.value }); }} className="font-mono text-xs bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5 normal-case" />
-          </label>
-        </div>
-        <p className="text-[10px] text-on-surface-variant -mt-1">Names only: the module references them; they must already be declared on the controller.</p>
+        {isJoint ? (
+          <p className="text-[10px] text-on-surface-variant">Tool <span className="font-mono">{record.profile.toolName}</span> and work object <span className="font-mono">{record.profile.wobjName}</span> come from the station profile; change them in the orientation card.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wide flex flex-col gap-1">Tool name
+                <input value={draft.toolName} onChange={(e) => { setTouched(true); setDraft({ ...draft, toolName: e.target.value }); }} className="font-mono text-xs bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5 normal-case" />
+              </label>
+              <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wide flex flex-col gap-1">Work object
+                <input value={draft.wobjName} onChange={(e) => { setTouched(true); setDraft({ ...draft, wobjName: e.target.value }); }} className="font-mono text-xs bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5 normal-case" />
+              </label>
+            </div>
+            <p className="text-[10px] text-on-surface-variant -mt-1">Names only: the module references them; they must already be declared on the controller.</p>
+          </>
+        )}
 
         {!isPoints && (
           <div className="grid grid-cols-2 gap-2">
             {Object.keys(draft.clearances).map((k) => (
-              <label key={k} className="text-[10px] font-bold text-on-surface-variant flex flex-col gap-1">{CLEARANCE_LABELS[k]} (mm)
+              <label key={k} className="text-[10px] font-bold text-on-surface-variant flex flex-col gap-1">{CLEARANCE_LABELS[k] || k} (mm)
                 <input type="number" min={0} max={1000} step={1} value={Number.isFinite(draft.clearances[k]) ? draft.clearances[k] : ""} onChange={(e) => setClear(k, e.target.value)} className="font-mono text-xs bg-surface-container-highest border border-outline-variant rounded px-2 py-1.5" />
               </label>
             ))}
@@ -107,7 +124,7 @@ export default function MotionProfileForm({ record, speeds, zones, disabled, onR
           </tbody>
         </table>
 
-        {!isPoints && (
+        {!isPoints && !isJoint && (
           <label className="text-[11px] flex flex-col gap-1">
             <span className="font-bold text-on-surface-variant">Near-straight arc handling</span>
             <select value={draft.nearStraightArcPolicy} onChange={(e) => { setTouched(true); setDraft({ ...draft, nearStraightArcPolicy: e.target.value }); }} className="bg-surface-container-highest border border-outline-variant rounded px-2 py-1">

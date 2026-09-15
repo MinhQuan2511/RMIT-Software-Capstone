@@ -13,14 +13,25 @@ const { createWatchFolderService } = require('./services/ingest/watchFolder');
 const { createLauncher } = require('./services/robotstudio/launcher');
 const exportWriter = require('./services/robotstudio/exportWriter');
 const { readCalibrationArchive } = require('./services/calibration/rspagReader');
+const { computeSourceIdentity } = require('./services/util/sourceIdentity');
 const { AppError, newDiagnosticId } = require('./services/util/errors');
+
+function safeSourceIdentity(repoRoot, logger) {
+  try {
+    return computeSourceIdentity(repoRoot);
+  } catch (err) {
+    logger.error('source identity unavailable', err);
+    return null;
+  }
+}
 
 function buildServices(config, overrides = {}) {
   const logger = overrides.logger || console;
   const store = overrides.store || createJobStore({ dataDir: config.dataDir });
   const launcher = overrides.launcher || createLauncher({ overrideExe: config.robotStudioExe || undefined });
   const guard = overrides.guard || createRequestGuard({ allowedOrigins: config.allowedOrigins, allowedHostnames: config.allowedHostnames });
-  const jobService = createJobService({ store, exportWriter: overrides.exportWriter || exportWriter, launcher, config, logger });
+  const sourceIdentity = overrides.sourceIdentity !== undefined ? overrides.sourceIdentity : safeSourceIdentity(config.repoRoot, logger);
+  const jobService = createJobService({ store, exportWriter: overrides.exportWriter || exportWriter, launcher, config, logger, sourceIdentity });
   const watchFolder = createWatchFolderService({ store, previewSource, config, clock: overrides.clock, fsp: overrides.fsp });
   return { store, launcher, guard, jobService, watchFolder, logger, readCalibrationArchive: overrides.readCalibrationArchive || readCalibrationArchive };
 }
@@ -39,7 +50,7 @@ function createApp({ config, store, launcher, guard, jobService, watchFolder, lo
     origin: (origin, cb) => cb(null, origin === undefined || guard.isAllowedOrigin(origin)),
     methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-VD-CSRF'],
-    exposedHeaders: ['X-VD-Output-Sha256', 'X-VD-File-Name'],
+    exposedHeaders: ['X-VD-Output-Sha256', 'X-VD-File-Name', 'X-VD-Package-Sha256'],
     maxAge: 600,
   }));
   app.use(express.json({ limit: config.limits.maxJsonBody }));

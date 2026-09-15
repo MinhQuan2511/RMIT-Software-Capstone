@@ -3,15 +3,22 @@
  *
  *   node scripts/benchmark.js [--iterations 200] [--out ../docs/benchmarks]
  *
- * Boundaries measured separately (monotonic process.hrtime.bigint()):
+ * Boundaries measured separately (monotonic process.hrtime.bigint()), per input:
  *   parse      parseFeatureText only                      (batched)
  *   plan       planSeam only                               (batched)
  *   compile    compileRapidModule incl. precheck           (batched)
- *   pipeline   parse + plan + compile, no I/O              (batched)
- *   service    jobService.createJob: read stored source from disk, pipeline,
- *              write revision files (temp data dir)        (per call)
+ *   pipeline   profile + parse + plan + compile, no I/O    (batched)
+ *   service    jobService.createJob: read stored source and provenance from disk,
+ *              pipeline, write revision files (temp data dir)  (per call)
  *   http       POST /api/jobs over loopback from the same process, incl. JSON
  *              and the service boundary above               (per call)
+ * Additional boundaries (offline milestone):
+ *   orientation         planFilletOrientation (joint-relative planner only)  (batched)
+ *   orientationCheck    recoverOrientationAngles on the stored quaternion    (batched)
+ *   calibrationInspect  inspectCalibrationFile on the supplied 4×4 YAML      (batched)
+ *   packageBuild        buildEvidencePackage from loaded inputs, no I/O      (batched)
+ *   packageService      jobService.evidencePackage: disk reads + ZIP + review-log append (per call)
+ *   packageHttp         POST …/evidence-package over loopback                (per call)
  * Not measured: browser rendering, user-observed workflow time, RobotStudio.
  */
 
@@ -20,11 +27,15 @@ const os = require('os');
 const path = require('path');
 const { execSync } = require('child_process');
 const { parseFeatureText } = require('../services/parsers/curveParser');
-const { resolveProfile } = require('../services/kinematics/profiles');
 const { planSeam } = require('../services/kinematics/pathPlanner');
+const { planFilletOrientation } = require('../services/kinematics/jointOrientation');
+const { recoverOrientationAngles } = require('../services/kinematics/orientationCheck');
 const { compileRapidModule } = require('../services/compiler/rapidCompiler');
-const { runPipeline } = require('../services/jobs/jobService');
+const { inspectCalibrationFile } = require('../services/calibration/calibrationInspector');
+const { buildEvidencePackage } = require('../services/packages/evidencePackage');
+const { runPipeline, jointHeaderLines, configurationIdentity } = require('../services/jobs/jobService');
 const { loadRuntimeConfig } = require('../services/config/runtimeConfig');
+const { computeSourceIdentity } = require('../services/util/sourceIdentity');
 const { createApp, buildServices } = require('../app');
 const { sha256 } = require('../services/util/hash');
 
@@ -35,6 +46,12 @@ const arg = (name, fallback) => {
 const ITER = Number(arg('iterations', 200));
 const OUT = path.resolve(__dirname, arg('out', '../../docs/benchmarks'));
 const SAMPLES = path.join(__dirname, '../../samples');
+const REPO = path.join(__dirname, '../..');
+
+// SYNTHETIC joint-relative input (not a measurement) and the supplied hand-eye YAML (copied verbatim from the task prompt).
+const JOINT_TEXT = 'units: mm\n# SYNTHETIC FIXTURE: straight fillet seam along +X (not a measurement)\ncurve: 400, 100, 300, 600, 100, 300, 5\n';
+const JOINT_PARAMS = { profileId: 'joint-relative-fillet', station: { id: 'synthetic-tool-z-approach' }, joint: { kind: 'template', template: 'fillet90_wall_left', referenceNormal: [0, 0, 1] }, orientation: { workAngleDeg: 45, pushAngleDeg: 10 } };
+const HAND_EYE_YAML = Buffer.from('%YAML:1.0\n---\ninfo: "4 0 "\nhandEyeMatrix: !!opencv-matrix\n   rows: 4\n   cols: 4\n   dt: f\n   data: [ 5.20042360e-01, -3.76300484e-01, 7.66781509e-01,\n       6.31424316e+02, 8.52015495e-01, 2.91824520e-01, -4.34635490e-01,\n       8.10536682e+02, -6.02121167e-02, 8.79338622e-01, 4.72374976e-01,\n       6.82570953e+01, 0., 0., 0., 1. ]\n');
 
 const now = () => process.hrtime.bigint();
 const toMs = (ns) => Number(ns) / 1e6;
@@ -91,14 +108,20 @@ function gitInfo() {
   }
 }
 
+const stage = (boundary, r) => (Array.isArray(r)
+  ? { boundary, stats: stats(r), raw: r }
+  : { boundary, batchSize: r.batchSize, stats: stats(r.perCallMs), raw: r.perCallMs });
+
 async function main() {
-  const { profile } = resolveProfile({});
-  const cases = ['Feature_Straight_Sample.txt', 'Feature_Arc_Sample.txt'].map((file) => {
-    const buf = fs.readFileSync(path.join(SAMPLES, file));
-    const text = buf.toString('utf-8');
-    const parsed = parseFeatureText(text);
-    const plan = planSeam(parsed.seam, profile);
-    return { file, buf, text, parsed, plan, sha: sha256(buf) };
+  const cases = [
+    { file: 'Feature_Straight_Sample.txt', buf: fs.readFileSync(path.join(SAMPLES, 'Feature_Straight_Sample.txt')), parameters: {} },
+    { file: 'Feature_Arc_Sample.txt', buf: fs.readFileSync(path.join(SAMPLES, 'Feature_Arc_Sample.txt')), parameters: {} },
+    { file: 'synthetic_joint_relative_fixture (inline)', buf: Buffer.from(JOINT_TEXT), parameters: JOINT_PARAMS },
+  ].map((c) => {
+    const text = c.buf.toString('utf-8');
+    const probe = runPipeline({ id: 'src_manual_000000000000000000000000', sha256: sha256(c.buf), contentType: 'feature-text', sourceKind: 'manual_upload' }, c.buf, c.parameters);
+    if (!probe.ok) throw new Error(`${c.file}: ${JSON.stringify(probe.diagnostics)}`);
+    return { ...c, text, parsed: parseFeatureText(text), probe, sha: sha256(c.buf) };
   });
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vd-bench-'));
@@ -112,37 +135,74 @@ async function main() {
   const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const base = `http://127.0.0.1:${server.address().port}/api`;
   const { csrfToken } = await (await fetch(`${base}/session`)).json();
+  const headers = { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', 'X-VD-CSRF': csrfToken };
   const project = await services.store.createProject({ name: 'benchmark' });
 
   const results = [];
+  let jointJob = null;
   for (const c of cases) {
     const { source } = await services.store.putSource({ content: c.buf, kind: 'manual_upload', name: c.file, contentType: 'feature-text' });
-    const meta = source;
-    const compileInput = { waypoints: c.plan.waypoints, segments: c.plan.segments, profile, provenance: { sourceSha256: c.sha, profileId: 'fixed-base-quaternion@1' } };
+    const { profile } = c.probe;
+    const provenance = { sourceSha256: c.sha, profileId: `${profile.id}@${profile.version}`, ...(profile.id === 'joint-relative-fillet' ? { headerLines: jointHeaderLines(profile, c.probe.plan) } : {}) };
+    const compileInput = { waypoints: c.probe.plan.waypoints, segments: c.probe.plan.segments, profile, provenance };
 
     const parse = batched(() => parseFeatureText(c.text), 200, ITER);
     const plan = batched(() => planSeam(c.parsed.seam, profile), 200, ITER);
     const compile = batched(() => compileRapidModule(compileInput), 100, ITER);
-    const pipeline = batched(() => runPipeline(meta, c.buf, {}), 50, ITER);
-    const service = await perCall(() => services.jobService.createJob({ projectId: project.id, sourceId: source.id }), ITER);
+    const pipeline = batched(() => runPipeline(source, c.buf, c.parameters), 50, ITER);
+    const service = await perCall(() => services.jobService.createJob({ projectId: project.id, sourceId: source.id, parameters: c.parameters }), ITER);
     const http = await perCall(async () => {
-      const r = await fetch(`${base}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000', 'X-VD-CSRF': csrfToken }, body: JSON.stringify({ projectId: project.id, sourceId: source.id }) });
+      const r = await fetch(`${base}/jobs`, { method: 'POST', headers, body: JSON.stringify({ projectId: project.id, sourceId: source.id, parameters: c.parameters }) });
       if (r.status !== 201) throw new Error(`unexpected status ${r.status}`);
       await r.arrayBuffer();
     }, ITER);
 
     results.push({
-      input: { file: c.file, sizeBytes: c.buf.length, sha256: c.sha, targets: c.plan.waypoints.length },
+      input: { file: c.file, sizeBytes: c.buf.length, sha256: c.sha, targets: c.probe.plan.waypoints.length, profile: `${profile.id}@${profile.version}`, synthetic: profile.id === 'joint-relative-fillet' },
       stages: {
-        parse: { boundary: 'parseFeatureText', batchSize: parse.batchSize, stats: stats(parse.perCallMs), raw: parse.perCallMs },
-        plan: { boundary: 'planSeam (incl. arc fit for arcs)', batchSize: plan.batchSize, stats: stats(plan.perCallMs), raw: plan.perCallMs },
-        compile: { boundary: 'compileRapidModule (validation + serialisation + precheck + SHA-256)', batchSize: compile.batchSize, stats: stats(compile.perCallMs), raw: compile.perCallMs },
-        pipeline: { boundary: 'runPipeline: profile + parse + plan + compile, no I/O', batchSize: pipeline.batchSize, stats: stats(pipeline.perCallMs), raw: pipeline.perCallMs },
-        service: { boundary: 'jobService.createJob: disk read of source, pipeline, atomic writes of job/revision/module/review files', stats: stats(service), raw: service },
-        http: { boundary: 'POST /api/jobs over 127.0.0.1 from the same Node process (client + server share the event loop)', stats: stats(http), raw: http },
+        parse: stage('parseFeatureText', parse),
+        plan: stage(profile.id === 'joint-relative-fillet' ? 'planSeam (joint-relative: chord checks + orientation planner + independent check)' : 'planSeam (incl. arc fit for arcs)', plan),
+        compile: stage('compileRapidModule (validation + serialisation + precheck + SHA-256)', compile),
+        pipeline: stage('runPipeline: profile + parse + plan + compile + configuration digest, no I/O', pipeline),
+        service: stage('jobService.createJob: disk read of source and provenance, pipeline, atomic writes of job/revision/module/review files', service),
+        http: stage('POST /api/jobs over 127.0.0.1 from the same Node process (client + server share the event loop)', http),
       },
     });
+    if (profile.id === 'joint-relative-fillet') jointJob = { source, c };
   }
+
+  // Additional boundaries on the synthetic joint-relative revision.
+  const { c } = jointJob;
+  const view = await services.jobService.createJob({ projectId: project.id, sourceId: jointJob.source.id, parameters: JOINT_PARAMS });
+  const { jobId } = view.record;
+  await services.jobService.acknowledge({ jobId, revision: 1, codes: view.gates.acknowledgements.missing, operator: 'benchmark' });
+  await services.jobService.review({ jobId, revision: 1, stage: 'geometry', operator: 'benchmark' });
+  const approved = await services.jobService.review({ jobId, revision: 1, stage: 'module', operator: 'benchmark' });
+  const o = approved.record.orientation;
+  const seam = [c.parsed.seam.startPoint, c.parsed.seam.endPoint].map((p) => [p.x, p.y, p.z]);
+  const { code } = await services.store.getModuleBytes(jobId, 1);
+  const provenanceNow = await services.store.getSourceProvenance(jointJob.source.id);
+  const identity = configurationIdentity(approved.record);
+  const sourceIdentity = computeSourceIdentity(REPO);
+  const pkgInput = { job: approved.job, record: approved.record, review: approved.review, gates: approved.gates, sourceMeta: jointJob.source, sourceContent: c.buf, provenanceNow, moduleCode: code, calibration: null, identity, generator: sourceIdentity, operator: 'benchmark', generatedAt: new Date('2026-01-01T00:00:00Z') };
+  const pkgBody = JSON.stringify({ outputSha256: approved.record.output.sha256, configurationSha256: identity.sha256, operator: 'benchmark' });
+
+  const extra = {
+    input: { file: 'synthetic_joint_relative_fixture (inline) + supplied hand-eye YAML', packageBytes: buildEvidencePackage(pkgInput).buffer.length },
+    stages: {
+      orientation: stage('planFilletOrientation', batched(() => planFilletOrientation({ start: seam[0], end: seam[1], joint: JOINT_PARAMS.joint, toolConvention: o.toolConvention, ...o.requested }), 200, ITER)),
+      orientationCheck: stage('recoverOrientationAngles (stored rounded quaternion)', batched(() => recoverOrientationAngles({ quaternion: o.recovered.quaternion, frame: o.jointFrame, toolConvention: o.toolConvention, requested: o.requested }), 200, ITER)),
+      calibrationInspect: stage('inspectCalibrationFile (strict YAML parse + 4×4 checks)', batched(() => inspectCalibrationFile({ content: HAND_EYE_YAML, displayName: 'handeye.yml' }), 100, ITER)),
+      packageBuild: stage('buildEvidencePackage (JSON, hashes, stored ZIP), no I/O', batched(() => buildEvidencePackage(pkgInput), 10, ITER, 50)),
+      packageService: stage('jobService.evidencePackage: disk reads, package build, review-log append (the log grows by one entry per call)', await perCall(() => services.jobService.evidencePackage({ jobId, revision: 1, outputSha256: approved.record.output.sha256, configurationSha256: identity.sha256, operator: 'benchmark' }), ITER)),
+      packageHttp: stage('POST /api/jobs/:id/revisions/1/evidence-package over 127.0.0.1 (same process)', await perCall(async () => {
+        const r = await fetch(`${base}/jobs/${jobId}/revisions/1/evidence-package`, { method: 'POST', headers, body: pkgBody });
+        if (r.status !== 200) throw new Error(`unexpected status ${r.status}`);
+        await r.arrayBuffer();
+      }, ITER)),
+    },
+  };
+  results.push(extra);
 
   server.close();
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -158,10 +218,12 @@ async function main() {
       totalMemGiB: +(os.totalmem() / 1024 ** 3).toFixed(1),
       timerResolutionNsObserved: timerResolutionNs(),
       ...gitInfo(),
+      backendSourceDigestSha256: sourceIdentity.backendSourceDigestSha256,
     },
-    settings: { iterations: ITER, warmupMicro: 500, warmupIo: 20 },
+    settings: { iterations: ITER, warmupMicro: 500, warmupIo: 20, warmupPackageBuild: 50 },
+    comparability: 'Earlier runs measured older backend code. The legacy cases use the same method, but the pipeline now also computes a configuration digest and the service boundary reads a provenance file, so results are not directly comparable.',
     results,
-    notUsedFor: 'These numbers are software timings on one machine. They are not user-observed workflow time, not setup time, and not RobotStudio or controller time.',
+    notUsedFor: 'These numbers are software timings on one machine. They are not user-observed workflow time, not setup time, not RobotStudio or controller time, and not workpiece or robot trials.',
   };
 
   fs.mkdirSync(OUT, { recursive: true });
@@ -170,10 +232,10 @@ async function main() {
 
   const fmt = (x) => x.toFixed(4);
   console.log(`Node ${report.environment.node} · ${report.environment.platform} · ${report.environment.cpu} · iterations ${ITER}`);
-  console.log('input                         stage     median ms   mean ms     p95 ms      min ms      max ms');
+  console.log('input                                         stage               median ms   mean ms     p95 ms      min ms      max ms');
   for (const r of results) {
     for (const [name, s] of Object.entries(r.stages)) {
-      console.log(`${r.input.file.padEnd(30)}${name.padEnd(10)}${fmt(s.stats.medianMs).padStart(10)}  ${fmt(s.stats.meanMs).padStart(10)}  ${fmt(s.stats.p95Ms).padStart(10)}  ${fmt(s.stats.minMs).padStart(10)}  ${fmt(s.stats.maxMs).padStart(10)}`);
+      console.log(`${r.input.file.slice(0, 44).padEnd(46)}${name.padEnd(18)}${fmt(s.stats.medianMs).padStart(10)}  ${fmt(s.stats.meanMs).padStart(10)}  ${fmt(s.stats.p95Ms).padStart(10)}  ${fmt(s.stats.minMs).padStart(10)}  ${fmt(s.stats.maxMs).padStart(10)}`);
     }
   }
   console.log(`raw results: ${path.relative(process.cwd(), file)}`);

@@ -13,6 +13,10 @@
 const { diagnostic } = require('../util/errors');
 const { canonicalJson, sha256 } = require('../util/hash');
 const { isValidIdentifier, isAllowedSpeed, isAllowedZone } = require('../validation/rapidSyntax');
+const { validateJointSpec, validateAngles, LIMITS: ORIENTATION_LIMITS, TEMPLATES: JOINT_TEMPLATES, PLANNER_VERSION } = require('./jointOrientation');
+const { resolveStation, listStationProfiles } = require('./stationProfiles');
+
+const CALIBRATION_ID = /^cal_[a-f0-9]{24}$/;
 
 const FIXED_BASE_QUATERNION = Object.freeze({
   id: 'fixed-base-quaternion',
@@ -69,6 +73,37 @@ const FIXED_BASE_QUATERNION = Object.freeze({
   },
 });
 
+const JOINT_RELATIVE_FILLET = Object.freeze({
+  id: 'joint-relative-fillet',
+  version: 1,
+  label: 'Joint-relative straight fillet (experimental)',
+  description:
+    'Torch orientation computed from an operator-declared 90° fillet joint (template or explicit frame) and a declared ' +
+    'tool-axis convention, for requested work and push angles relative to the joint. Straight seams only. Approach, ' +
+    'retract and standby lie along the planned torch-body direction.',
+  experimental: true,
+  plannerVersion: PLANNER_VERSION,
+  frameConvention:
+    'Positions in millimetres in the robot base frame used through the station work object. Quaternions in ABB order ' +
+    '[q1,q2,q3,q4] = [w,x,y,z]. The joint frame and tool convention are declarations, not measurements.',
+  toolName: null,
+  wobjName: null,
+  toolDeclaration: FIXED_BASE_QUATERNION.toolDeclaration,
+  configuration: [0, 0, 0, 0],
+  configurationNote: FIXED_BASE_QUATERNION.configurationNote,
+  clearances: {
+    approachStandoffMm: 60,
+    retractStandoffMm: 60,
+    homeStandoffMm: 350,
+  },
+  motion: FIXED_BASE_QUATERNION.motion,
+  orientationDefaults: { workAngleDeg: 45, pushAngleDeg: 10 },
+  orientationLimits: { workAngleDeg: ORIENTATION_LIMITS.workAngleDeg, pushAngleDeg: ORIENTATION_LIMITS.pushAngleDeg },
+  jointTemplates: Object.fromEntries(Object.entries(JOINT_TEMPLATES).map(([k, v]) => [k, v.label])),
+  supportedSeamTypes: ['straight'],
+  geometryLimits: FIXED_BASE_QUATERNION.geometryLimits,
+});
+
 const POINT_LIST_LINEAR = Object.freeze({
   id: 'point-list-linear',
   version: 1,
@@ -89,7 +124,11 @@ const POINT_LIST_LINEAR = Object.freeze({
   maxRows: 2000,
 });
 
-const PROFILES = { [FIXED_BASE_QUATERNION.id]: FIXED_BASE_QUATERNION, [POINT_LIST_LINEAR.id]: POINT_LIST_LINEAR };
+const PROFILES = {
+  [FIXED_BASE_QUATERNION.id]: FIXED_BASE_QUATERNION,
+  [JOINT_RELATIVE_FILLET.id]: JOINT_RELATIVE_FILLET,
+  [POINT_LIST_LINEAR.id]: POINT_LIST_LINEAR,
+};
 
 const CLEARANCE_LIMIT_MM = 1000;
 
@@ -108,20 +147,24 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
     return { ok: false, diagnostics: [diagnostic('PARAM_INVALID', 'error', 'parameters must be an object.')] };
   }
 
-  const allowedTop = new Set(['profileId', 'toolName', 'wobjName', 'clearances', 'motion', 'nearStraightArcPolicy']);
-  for (const key of Object.keys(parameters)) {
-    if (!allowedTop.has(key)) diagnostics.push(diagnostic('PARAM_UNKNOWN', 'error', `Unknown parameter '${key}'.`, { field: key }));
-  }
-
   const profileId = parameters.profileId ?? defaultProfileId;
   const base = PROFILES[profileId];
+  const isJoint = profileId === JOINT_RELATIVE_FILLET.id;
+  // Joint-relative revisions take tool and work-object names from the station profile only.
+  const allowedTop = new Set(isJoint
+    ? ['profileId', 'station', 'joint', 'orientation', 'clearances', 'motion', 'calibrationReference']
+    : ['profileId', 'toolName', 'wobjName', 'clearances', 'motion', 'nearStraightArcPolicy', 'calibrationReference']);
+  for (const key of Object.keys(parameters)) {
+    if (!allowedTop.has(key)) diagnostics.push(diagnostic('PARAM_UNKNOWN', 'error', `Unknown parameter '${key}'${base ? ` for profile '${profileId}'` : ''}.`, { field: key }));
+  }
+
   if (!base) {
     diagnostics.push(diagnostic('PARAM_UNKNOWN_PROFILE', 'error', `Unknown profile '${profileId}'.`, { field: 'profileId' }));
     return { ok: false, diagnostics };
   }
   const profile = deepCopy(base);
 
-  for (const key of ['toolName', 'wobjName']) {
+  for (const key of isJoint ? [] : ['toolName', 'wobjName']) {
     if (parameters[key] !== undefined) {
       if (!isValidIdentifier(parameters[key])) {
         diagnostics.push(diagnostic('PARAM_INVALID_IDENTIFIER', 'error',
@@ -189,11 +232,67 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
     }
   }
 
+  if (parameters.calibrationReference !== undefined) {
+    const ref = parameters.calibrationReference;
+    if (!ref || typeof ref !== 'object' || Array.isArray(ref) || Object.keys(ref).length !== 1 || !CALIBRATION_ID.test(ref.calibrationId)) {
+      diagnostics.push(diagnostic('PARAM_INVALID', 'error', "calibrationReference must be { calibrationId: 'cal_…' } naming an imported calibration file.", { field: 'calibrationReference' }));
+    } else {
+      profile.calibrationReference = { calibrationId: ref.calibrationId };
+    }
+  }
+
+  if (isJoint) {
+    const station = resolveStation(parameters.station);
+    diagnostics.push(...station.diagnostics);
+    if (station.ok) {
+      profile.station = station.station;
+      profile.toolName = station.station.toolName;
+      profile.wobjName = station.station.wobjName;
+    }
+    if (parameters.joint === undefined) {
+      diagnostics.push(diagnostic('PARAM_JOINT_REQUIRED', 'error',
+        'A joint template or explicit joint frame is required (parameters.joint). The seam descriptor carries no joint geometry, so none is assumed.', { field: 'joint' }));
+    } else {
+      const joint = validateJointSpec(parameters.joint);
+      diagnostics.push(...joint.diagnostics);
+      if (joint.ok) profile.joint = joint.spec;
+    }
+    const o = parameters.orientation === undefined ? {} : parameters.orientation;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) {
+      diagnostics.push(diagnostic('PARAM_INVALID', 'error', 'orientation must be an object.', { field: 'orientation' }));
+    } else {
+      for (const k of Object.keys(o)) {
+        if (k !== 'workAngleDeg' && k !== 'pushAngleDeg') diagnostics.push(diagnostic('PARAM_UNKNOWN', 'error', `Unknown field orientation.${k}.`, { field: `orientation.${k}` }));
+      }
+      const request = {
+        workAngleDeg: o.workAngleDeg ?? base.orientationDefaults.workAngleDeg,
+        pushAngleDeg: o.pushAngleDeg ?? base.orientationDefaults.pushAngleDeg,
+      };
+      const bad = validateAngles(request);
+      diagnostics.push(...bad);
+      if (!bad.length) profile.orientationRequest = request;
+    }
+  }
+
   if (diagnostics.some((d) => d.severity === 'error')) return { ok: false, diagnostics };
 
   // The effective parameters, normalised, identify the configuration of a
   // revision: two requests that resolve to the same profile hash identically.
-  const effective = {
+  // For joint-relative revisions this includes the complete station snapshot,
+  // so a metadata-only change (provenance, declaration note, evidence
+  // reference) creates a new identity even if the module bytes do not change.
+  const effective = isJoint ? {
+    profileId: profile.id,
+    profileVersion: profile.version,
+    toolName: profile.toolName,
+    wobjName: profile.wobjName,
+    station: profile.station,
+    joint: profile.joint,
+    orientation: profile.orientationRequest,
+    clearances: profile.clearances,
+    motion: profile.motion,
+    calibrationReference: profile.calibrationReference,
+  } : {
     profileId: profile.id,
     profileVersion: profile.version,
     toolName: profile.toolName,
@@ -201,6 +300,7 @@ function resolveProfile(parameters = {}, defaultProfileId = FIXED_BASE_QUATERNIO
     clearances: profile.clearances,
     motion: profile.motion,
     nearStraightArcPolicy: profile.nearStraightArcPolicy,
+    calibrationReference: profile.calibrationReference,
   };
   return { ok: true, profile, parameters: effective, parametersSha256: sha256(canonicalJson(effective)), diagnostics };
 }
@@ -209,4 +309,4 @@ function listProfiles() {
   return Object.values(PROFILES).map((p) => deepCopy(p));
 }
 
-module.exports = { PROFILES, FIXED_BASE_QUATERNION, POINT_LIST_LINEAR, resolveProfile, listProfiles };
+module.exports = { PROFILES, FIXED_BASE_QUATERNION, JOINT_RELATIVE_FILLET, POINT_LIST_LINEAR, resolveProfile, listProfiles, listStationProfiles };

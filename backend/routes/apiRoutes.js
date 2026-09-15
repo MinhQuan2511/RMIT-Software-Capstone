@@ -11,9 +11,14 @@ const path = require('path');
 const fs = require('fs');
 const { AppError } = require('../services/util/errors');
 const { createRateLimiter } = require('../services/security/requestGuard');
-const { listProfiles } = require('../services/kinematics/profiles');
+const { listProfiles, listStationProfiles } = require('../services/kinematics/profiles');
+const { LIMITS: ORIENTATION_LIMITS, TEMPLATES: JOINT_TEMPLATES, AXES: TOOL_AXES, ROLL_REFERENCES } = require('../services/kinematics/jointOrientation');
+const { inspectCalibrationFile } = require('../services/calibration/calibrationInspector');
 const { SPEEDS, ZONES } = require('../services/validation/rapidSyntax');
-const { displayName } = require('../services/jobs/jobStore');
+const { displayName, SOURCE_PROVENANCE } = require('../services/jobs/jobStore');
+const { operatorName } = require('../services/jobs/jobService');
+
+const CALIBRATION_MAX_BYTES = 64 * 1024;
 
 const DEMO_SAMPLES = { straight: 'Feature_Straight_Sample.txt', arc: 'Feature_Arc_Sample.txt' };
 const POINT_ROW_KEYS = ['rowNumber', 'name', 'x', 'y', 'z', 'q1', 'q2', 'q3', 'q4', 'rx', 'ry', 'rz', 'cf1', 'cf4', 'cf6', 'cfx'];
@@ -69,6 +74,19 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
     },
   });
 
+  // Calibration import: one OpenCV YAML file plus an optional companion (e.g. Cfig, which has no extension).
+  const calibrationUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: CALIBRATION_MAX_BYTES, files: 2, fields: 2, parts: 4, fieldNameSize: 32 },
+    fileFilter: (req, file, cb) => {
+      const base = displayName(file.originalname);
+      if (file.fieldname === 'calibration' && !/\.ya?ml$/i.test(base)) {
+        return cb(new AppError(415, 'UPLOAD_UNSUPPORTED_TYPE', `Calibration files must be OpenCV .yml/.yaml files (got '${base}').`));
+      }
+      return cb(null, true);
+    },
+  });
+
   // ---- service ----------------------------------------------------------
   router.get('/health', (req, res) => {
     res.json({
@@ -91,7 +109,17 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
     });
   });
 
-  router.get('/profiles', (req, res) => res.json({ profiles: listProfiles(), speeds: [...SPEEDS], zones: [...ZONES] }));
+  router.get('/profiles', (req, res) => res.json({
+    profiles: listProfiles(),
+    speeds: [...SPEEDS],
+    zones: [...ZONES],
+    stationProfiles: listStationProfiles(),
+    jointTemplates: Object.fromEntries(Object.entries(JOINT_TEMPLATES).map(([k, v]) => [k, v.label])),
+    toolAxes: Object.keys(TOOL_AXES),
+    rollReferences: ROLL_REFERENCES,
+    orientationLimits: ORIENTATION_LIMITS,
+    sourceProvenance: SOURCE_PROVENANCE,
+  }));
 
   // ---- projects -----------------------------------------------------------
   router.get('/projects', wrap(async (req, res) => {
@@ -127,7 +155,8 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
   // ---- sources ------------------------------------------------------------
   router.get('/sources', wrap(async (req, res) => {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 30, 1), 100);
-    res.json({ sources: await store.listSources({ limit }) });
+    const sources = await store.listSources({ limit });
+    res.json({ sources: await Promise.all(sources.map(async (s) => ({ ...s, provenance: (await store.getSourceProvenance(s.id)).effective }))) });
   }));
 
   router.post('/sources', limiters.upload, (req, res, next) => {
@@ -135,10 +164,20 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
   }, wrap(async (req, res) => {
     const files = req.files || [];
     if (files.length === 0) throw new AppError(422, 'UPLOAD_EMPTY', 'Select at least one .txt file.');
+    // Optional provenance declaration for every file in this upload (validated before anything is stored).
+    const body = req.body || {};
+    const declared = typeof body.provenance === 'string' && body.provenance !== '';
+    if (declared && !Object.prototype.hasOwnProperty.call(SOURCE_PROVENANCE, body.provenance)) {
+      throw new AppError(422, 'PROVENANCE_INVALID', `provenance must be one of ${Object.keys(SOURCE_PROVENANCE).join(', ')}.`);
+    }
+    const who = declared ? operatorName(body.operator) : null;
     const results = [];
     for (const file of files) {
       const { source, created } = await store.putSource({ content: file.buffer, kind: 'manual_upload', name: file.originalname, contentType: 'feature-text' });
-      results.push({ source, created, preview: jobService.previewSource(source, file.buffer) });
+      const provenance = declared
+        ? await store.declareSourceProvenance(source.id, { provenance: body.provenance, declaredBy: who, note: typeof body.note === 'string' ? body.note : '' })
+        : await store.getSourceProvenance(source.id);
+      results.push({ source, created, provenance, preview: jobService.previewSource(source, file.buffer) });
     }
     res.status(201).json({ sources: results });
   }));
@@ -162,7 +201,13 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
   router.get('/sources/:sourceId', wrap(async (req, res) => {
     const { meta, content } = await store.getSourceContent(req.params.sourceId);
     const preview = jobService.previewSource(meta, content);
-    res.json({ source: meta, preview, text: meta.contentType === 'feature-text' ? content.toString('utf-8') : null });
+    res.json({ source: meta, provenance: await store.getSourceProvenance(meta.id), preview, text: meta.contentType === 'feature-text' ? content.toString('utf-8') : null });
+  }));
+
+  router.post('/sources/:sourceId/provenance', limiters.upload, wrap(async (req, res) => {
+    const { provenance, operator, note } = req.body || {};
+    const who = operatorName(operator);
+    res.json({ provenance: await store.declareSourceProvenance(req.params.sourceId, { provenance, declaredBy: who, note: note ?? '' }) });
   }));
 
   // ---- jobs ---------------------------------------------------------------
@@ -213,6 +258,16 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
       res.json(await jobService.exportModule({ jobId: req.params.jobId, revision: revisionParam(req), outputSha256, action, operator }));
     }));
 
+  router.post('/jobs/:jobId/revisions/:revision/evidence-package', limiters.export, wrap(async (req, res) => {
+    const { outputSha256, configurationSha256, operator } = req.body || {};
+    const pkg = await jobService.evidencePackage({ jobId: req.params.jobId, revision: revisionParam(req), outputSha256, configurationSha256, operator });
+    res.set('Cache-Control', 'no-store');
+    res.set('X-VD-Package-Sha256', pkg.packageSha256);
+    res.set('X-VD-File-Name', pkg.fileName);
+    res.set('Content-Disposition', `attachment; filename="${pkg.fileName}"`);
+    res.type('application/zip').send(pkg.buffer);
+  }));
+
   // ---- RobotStudio and calibration -----------------------------------------
   router.get('/robotstudio/status', (req, res) => {
     const d = launcher.discover();
@@ -231,6 +286,31 @@ function createApiRouter({ config, store, jobService, watchFolder, launcher, gua
       }
     }
     res.json(calibrationCache);
+  }));
+
+  // Imported calibration files: inspection only. Nothing here applies a transform.
+  const calibrationView = async (id) => {
+    const c = await store.getCalibrationContent(id);
+    const inspection = inspectCalibrationFile({ content: c.content, displayName: c.meta.displayName, companions: c.companions.map((x) => ({ content: x.content, displayName: x.displayName })) });
+    return { calibration: c.meta, inspection };
+  };
+  router.get('/calibrations', wrap(async (req, res) => {
+    const metas = await store.listCalibrations({ limit: 50 });
+    const calibrations = await Promise.all(metas.map(async (m) => {
+      const { inspection } = await calibrationView(m.id);
+      return { ...m, numericalCheck: inspection.numericalCheck, physicalCalibrationStatus: inspection.physicalCalibrationStatus, activation: inspection.activation.status };
+    }));
+    res.json({ calibrations });
+  }));
+  router.get('/calibrations/:calibrationId', wrap(async (req, res) => res.json(await calibrationView(req.params.calibrationId))));
+  router.post('/calibrations', limiters.upload, (req, res, next) => {
+    calibrationUpload.fields([{ name: 'calibration', maxCount: 1 }, { name: 'cfig', maxCount: 1 }])(req, res, (err) => (err ? next(mapMulterError(err)) : next()));
+  }, wrap(async (req, res) => {
+    const file = req.files && req.files.calibration && req.files.calibration[0];
+    if (!file) throw new AppError(422, 'UPLOAD_EMPTY', "Send the OpenCV YAML file in the 'calibration' field.");
+    const cfig = req.files.cfig && req.files.cfig[0];
+    const { meta, created } = await store.putCalibration({ content: file.buffer, name: file.originalname, companion: cfig ? { content: cfig.buffer, name: cfig.originalname } : null });
+    res.status(201).json({ created, ...(await calibrationView(meta.id)) });
   }));
 
   // ---- removed endpoints ----------------------------------------------------

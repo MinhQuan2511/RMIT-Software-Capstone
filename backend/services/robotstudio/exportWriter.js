@@ -36,8 +36,15 @@ async function saveModuleFile({ exportDir, fileName, code, expectedSha256 }) {
   let realDir;
   try {
     realDir = await fsp.realpath(exportDir);
-  } catch {
-    throw new AppError(409, 'EXPORT_DIR_MISSING', 'The export folder (Downloads by default) does not exist. Set VD_EXPORT_DIR or create the folder.');
+  } catch (err) {
+    // Report what actually happened: a folder we may not open is not a missing folder.
+    if (err.code === 'EACCES' || err.code === 'EPERM') {
+      throw new AppError(409, 'EXPORT_PERMISSION_DENIED', 'No permission to open the export folder.');
+    }
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+      throw new AppError(409, 'EXPORT_DIR_MISSING', 'The export folder (Downloads by default) does not exist. Set VD_EXPORT_DIR or create the folder.');
+    }
+    throw new AppError(409, 'EXPORT_WRITE_FAILED', 'The export folder could not be opened.');
   }
   const st = await fsp.stat(realDir);
   if (!st.isDirectory()) throw new AppError(409, 'EXPORT_DIR_NOT_DIRECTORY', 'The export path is not a folder.');

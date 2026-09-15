@@ -36,12 +36,21 @@ function csrfToken(force = false) {
   return tokenPromise;
 }
 
+/** Error body of a response, also when the request asked for binary data. */
+function errorBody(response) {
+  let data = response && response.data;
+  if (typeof ArrayBuffer !== "undefined" && data instanceof ArrayBuffer) {
+    try { data = JSON.parse(new TextDecoder().decode(data)); } catch { data = null; }
+  }
+  return data && typeof data === "object" && data.error ? data.error : {};
+}
+
 function normalize(err) {
   if (axios.isCancel(err) || err?.code === "ERR_CANCELED") {
     return new ApiError({ code: "CANCELLED", message: "Request cancelled.", cancelled: true });
   }
   if (err?.response) {
-    const body = err.response.data && typeof err.response.data === "object" ? err.response.data.error || {} : {};
+    const body = errorBody(err.response);
     return new ApiError({
       status: err.response.status,
       code: body.code || `HTTP_${err.response.status}`,
@@ -65,7 +74,7 @@ async function request(config, retried = false) {
     const res = await http.request({ ...config, headers });
     return config.fullResponse ? res : res.data;
   } catch (err) {
-    const code = err?.response?.data?.error?.code;
+    const code = err?.response ? errorBody(err.response).code : undefined;
     if (!retried && err?.response?.status === 403 && code === "CSRF_TOKEN_INVALID") {
       await csrfToken(true).catch(() => {});
       return request(config, true);
@@ -90,11 +99,18 @@ export const api = {
 
   listSources: (limit = 30) => request({ url: `/sources?limit=${limit}` }),
   getSource: (sourceId, signal) => request({ url: `/sources/${encodeURIComponent(sourceId)}`, signal }),
-  uploadSources: (files) => {
+  /** declaration: null, or { provenance, operator, note } applied to every uploaded file. */
+  uploadSources: (files, declaration = null) => {
     const form = new FormData();
     for (const f of files) form.append("files", f, f.name);
+    if (declaration) {
+      form.append("provenance", declaration.provenance);
+      form.append("operator", declaration.operator || "");
+      if (declaration.note) form.append("note", declaration.note);
+    }
     return request({ method: "post", url: "/sources", data: form });
   },
+  declareSourceProvenance: (sourceId, provenance, operator, note = "") => request({ method: "post", url: `/sources/${encodeURIComponent(sourceId)}/provenance`, data: { provenance, operator, note } }),
   loadDemoSample: (sample) => request({ method: "post", url: "/sources/demo", data: { sample } }),
   createPointListSource: (displayName, document) => request({ method: "post", url: "/sources/point-list", data: { displayName, document } }),
 
@@ -111,6 +127,19 @@ export const api = {
   },
   exportModule: (jobId, revision, body) => request({ method: "post", url: `${rev(jobId, revision)}/export`, data: body, timeout: 30000 }),
 
+  async fetchEvidencePackage(jobId, revision, body) {
+    const res = await request({ method: "post", url: `${rev(jobId, revision)}/evidence-package`, data: body, responseType: "arraybuffer", fullResponse: true, timeout: 30000 });
+    return { bytes: res.data, sha256: res.headers["x-vd-package-sha256"], fileName: res.headers["x-vd-file-name"] };
+  },
+
   robotStudioStatus: () => request({ url: "/robotstudio/status" }),
   calibrationRoutine: () => request({ url: "/calibration/routine" }),
+  listCalibrations: () => request({ url: "/calibrations" }),
+  getCalibration: (calibrationId) => request({ url: `/calibrations/${encodeURIComponent(calibrationId)}` }),
+  importCalibration: (file, companion = null) => {
+    const form = new FormData();
+    form.append("calibration", file, file.name);
+    if (companion) form.append("cfig", companion, companion.name);
+    return request({ method: "post", url: "/calibrations", data: form });
+  },
 };

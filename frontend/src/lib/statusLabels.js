@@ -7,8 +7,12 @@ export const VALIDATION_ROWS = [
   { key: "input", label: "Input / schema" },
   { key: "geometry", label: "Geometry checks" },
   { key: "applicationPrechecks", label: "Application prechecks" },
+  { key: "orientationCheck", label: "Joint-relative orientation (mathematical check)" },
   { key: "operatorReview", label: "Operator review (this revision)" },
+  { key: "configurationProvenance", label: "Station / tool configuration" },
+  { key: "sourceProvenance", label: "Source provenance" },
   { key: "robotStudio", label: "RobotStudio import / validation" },
+  { key: "calibrationTransform", label: "Calibration transform" },
   { key: "controllerConnection", label: "Controller connection" },
   { key: "physicalCommissioning", label: "Physical commissioning" },
   { key: "reachability", label: "Reachability / IK" },
@@ -28,6 +32,27 @@ const STATE = {
   not_integrated: { text: "Not integrated in this application", tone: "neutral", icon: "link_off" },
   not_recorded: { text: "No evidence recorded", tone: "neutral", icon: "remove_circle_outline" },
   not_evaluated: { text: "Not evaluated", tone: "neutral", icon: "help_outline" },
+  mathematical_check_passed: { text: "Mathematical check passed — not robot verified", tone: "info", icon: "calculate" },
+  mathematical_check_failed: { text: "Mathematical check failed", tone: "bad", icon: "cancel" },
+  not_applicable: { text: "Not applicable to this profile", tone: "neutral", icon: "remove" },
+  synthetic_fixture: { text: "SYNTHETIC fixture — offline evidence only", tone: "pending", icon: "science" },
+  operator_declared: { text: "Operator-declared — not verified by this app", tone: "info", icon: "person" },
+  operator_reported_external_evidence: { text: "Operator-declared, cites external evidence — not verified", tone: "info", icon: "person_check" },
+  documented_unresolved: { text: "Unresolved", tone: "bad", icon: "help" },
+  legacy_fixed_profile: { text: "Legacy fixed-orientation profile", tone: "neutral", icon: "history" },
+  user_supplied_unverified: { text: "User-supplied — origin not verified", tone: "neutral", icon: "help_outline" },
+  recorded_device_export: { text: "Declared device export (operator statement)", tone: "info", icon: "person" },
+  provenance_not_recorded: { text: "Not recorded (older revision)", tone: "neutral", icon: "remove_circle_outline" },
+  not_applied: { text: "Not applied — robot-base input assumed", tone: "neutral", icon: "block" },
+  not_validated: { text: "Not validated — no calibration evidence", tone: "neutral", icon: "help_outline" },
+  disabled: { text: "Disabled", tone: "neutral", icon: "block" },
+  ambiguous_multiple_4x4_matrices: { text: "Ambiguous — several 4×4 matrices", tone: "bad", icon: "help" },
+};
+
+export const PROVENANCE_LABEL = {
+  recorded_device_export: "Declared device export",
+  user_supplied_unverified: "Unverified origin",
+  synthetic_fixture: "SYNTHETIC fixture",
 };
 
 export function describeState(value) {

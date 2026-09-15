@@ -27,6 +27,7 @@ const EXTERNAL_AXES = '9E+09,9E+09,9E+09,9E+09,9E+09,9E+09';
 const MAX_ABS_POSITION_MM = 1e6;
 const PROVENANCE_VALUE = /^[A-Za-z0-9@._:-]{1,128}$/;
 const INSTRUCTIONS = new Set(['MoveJ', 'MoveL', 'MoveC']);
+const HEADER_LINE = /^[\x20-\x7E]{1,120}$/;
 
 /**
  * Fixed-notation decimal with trailing zeros trimmed. Never exponent notation.
@@ -53,6 +54,13 @@ function validateInput({ waypoints, segments, profile, provenance }) {
   }
   for (const key of ['sourceSha256', 'profileId']) {
     if (!PROVENANCE_VALUE.test(String(provenance && provenance[key]))) err('RAPID_INVALID_PROVENANCE', `Provenance ${key} is missing or has unsupported characters.`, { field: key });
+  }
+  // Optional comment lines (joint-relative profile). Never the output hash: the module cannot contain its own hash.
+  if (provenance && provenance.headerLines !== undefined) {
+    const lines = provenance.headerLines;
+    if (!Array.isArray(lines) || lines.length > 12 || lines.some((l) => typeof l !== 'string' || !HEADER_LINE.test(l))) {
+      err('RAPID_INVALID_PROVENANCE', 'Provenance header lines must be at most 12 printable-ASCII lines of 1–120 characters.', { field: 'headerLines' });
+    }
   }
 
   if (!Array.isArray(waypoints) || waypoints.length === 0) {
@@ -140,6 +148,7 @@ function compileRapidModule(input) {
     '    !   No welding, process or I/O instructions are included.',
     `    ! Source SHA-256: ${provenance.sourceSha256}`,
     `    ! Profile: ${provenance.profileId}`,
+    ...(provenance.headerLines || []).map((l) => `    ! ${l}`),
     `    ! Generator: ${GENERATOR_VERSION}`,
     `    ! Tool/work object: ${profile.toolName} / ${profile.wobjName} (must already exist on the controller)`,
     '    ! Robot configuration: fixed values, not solved; verify in RobotStudio.',

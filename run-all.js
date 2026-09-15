@@ -1,5 +1,6 @@
 /**
  * Starts the backend (127.0.0.1:5000) and frontend (127.0.0.1:3000) for local use.
+ * Set PORT and/or VD_FRONTEND_PORT to use other ports.
  *
  * It checks that both ports are free first and refuses to start otherwise. It
  * never stops processes it did not start: the previous version killed
@@ -11,9 +12,24 @@ const { spawn } = require('child_process');
 const net = require('net');
 
 const HOST = '127.0.0.1';
+// Defaults 5000/3000. PORT and VD_FRONTEND_PORT move them (e.g. when another copy already runs);
+// the frontend's API URL and the backend's origin allowlist follow unless set explicitly.
+const BACKEND_PORT = Number(process.env.PORT) || 5000;
+const FRONTEND_PORT = Number(process.env.VD_FRONTEND_PORT) || 3000;
 const SERVICES = [
-  { name: 'backend', port: Number(process.env.PORT) || 5000, args: ['--prefix', 'backend', 'run', 'dev'] },
-  { name: 'frontend', port: 3000, args: ['--prefix', 'frontend', 'run', 'dev'] },
+  {
+    name: 'backend',
+    port: BACKEND_PORT,
+    args: ['--prefix', 'backend', 'run', 'dev'],
+    env: { VD_ALLOWED_ORIGINS: process.env.VD_ALLOWED_ORIGINS || `http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}` },
+  },
+  {
+    name: 'frontend',
+    port: FRONTEND_PORT,
+    // A later --port overrides the one in the frontend's dev script.
+    args: ['--prefix', 'frontend', 'run', 'dev', ...(FRONTEND_PORT !== 3000 ? ['--', '--port', String(FRONTEND_PORT)] : [])],
+    env: { NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || `http://127.0.0.1:${BACKEND_PORT}/api` },
+  },
 ];
 
 function portIsFree(port) {
@@ -43,10 +59,10 @@ async function main() {
     }
   }
 
-  console.log('Starting VertexDynamics (local only): backend http://127.0.0.1:5000/api, frontend http://127.0.0.1:3000');
+  console.log(`Starting VertexDynamics (local only): backend http://${HOST}:${BACKEND_PORT}/api, frontend http://${HOST}:${FRONTEND_PORT}`);
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  // Fixed arguments only; shell is required to run npm.cmd on Windows.
-  const children = SERVICES.map((s) => ({ ...s, child: spawn(npm, s.args, { stdio: 'inherit', shell: process.platform === 'win32' }) }));
+  // Fixed arguments only (ports are validated numbers); shell is required to run npm.cmd on Windows.
+  const children = SERVICES.map((s) => ({ ...s, child: spawn(npm, s.args, { stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, ...s.env } }) }));
 
   let exiting = false;
   const shutdown = (reason, code = 0) => {
@@ -68,6 +84,14 @@ async function main() {
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // A supervisor that started this launcher with an IPC channel (for example the lifecycle
+  // check in scripts/) can request the same orderly shutdown. On Windows a programmatic
+  // SIGINT terminates a Node process abruptly, so it cannot exercise this path.
+  if (typeof process.send === 'function') {
+    process.on('message', (msg) => { if (msg && msg.type === 'shutdown') shutdown('shutdown requested over IPC'); });
+    process.on('disconnect', () => shutdown('supervisor disconnected'));
+  }
 }
 
 main();

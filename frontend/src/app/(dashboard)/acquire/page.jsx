@@ -7,7 +7,8 @@ import { useToast } from "@/components/ToastContext";
 import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { api } from "@/services/apiClient";
 import { Card, DiagnosticsList, Icon, InlineError, SourceKindBadge } from "@/components/StatusPanels";
-import { shortHash } from "@/lib/statusLabels";
+import { shortHash, PROVENANCE_LABEL } from "@/lib/statusLabels";
+import { usabilityLog } from "@/lib/usabilityLog";
 
 const STATUS = {
   Writing: { icon: "edit_note", cls: "bg-amber-500/10 text-amber-800", hint: "Waiting for size and modification time to settle" },
@@ -45,7 +46,7 @@ function PreviewChip({ preview }) {
 export default function AcquirePage() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { projectId, sourceId, selectSource, applyJobView, job } = useWorkflowSession();
+  const { projectId, sourceId, selectSource, applyJobView, job, operator } = useWorkflowSession();
 
   const [method, setMethod] = useState("watched-folder");
   const [watch, setWatch] = useState({ data: null, error: null });
@@ -56,6 +57,8 @@ export default function AcquirePage() {
   const [staged, setStaged] = useState([]);
   const [uploads, setUploads] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadProvenance, setUploadProvenance] = useState("user_supplied_unverified");
+  const [declaring, setDeclaring] = useState({ value: "", note: "", busy: false, error: null });
   const [loadingDemo, setLoadingDemo] = useState(false);
   const [selected, setSelected] = useState({ key: null, data: null, error: null });
   const [processing, setProcessing] = useState(false);
@@ -144,7 +147,8 @@ export default function AcquirePage() {
   const upload = async () => {
     setUploading(true);
     try {
-      const r = await api.uploadSources(staged.filter((f) => /\.txt$/i.test(f.name)));
+      const declaration = uploadProvenance !== "user_supplied_unverified" ? { provenance: uploadProvenance, operator } : null;
+      const r = await api.uploadSources(staged.filter((f) => /\.txt$/i.test(f.name)), declaration);
       setUploads(r.sources);
       setStaged([]);
       r.sources.forEach((s) => addLog(`Uploaded ${s.source.displayName} → ${s.source.id}${s.created ? "" : " (identical bytes already stored)"}`, s.preview.ok ? "ok" : "bad"));
@@ -171,6 +175,19 @@ export default function AcquirePage() {
     }
   };
 
+  const declareProvenance = async () => {
+    setDeclaring((d) => ({ ...d, busy: true, error: null }));
+    try {
+      await api.declareSourceProvenance(sourceId, declaring.value, operator, declaring.note);
+      const d = await api.getSource(sourceId);
+      setSelected({ key: sourceId, data: d, error: null });
+      setDeclaring({ value: "", note: "", busy: false, error: null });
+      addLog(`Provenance of ${d.source.displayName} declared as ${d.provenance.effective.value}`, "info");
+    } catch (err) {
+      setDeclaring((d) => ({ ...d, busy: false, error: err }));
+    }
+  };
+
   const processSource = async (parameters) => {
     if (!sourceId) return;
     setProcessing(true);
@@ -178,6 +195,7 @@ export default function AcquirePage() {
     try {
       const view = await api.createJob(projectId, sourceId, parameters);
       applyJobView(view);
+      usabilityLog.record("job_created", { revision: view.record.revision, plannedType: view.record.geometry.plannedType });
       addLog(`Job ${view.record.jobId} revision ${view.record.revision} created`, "ok");
       showToast("Job created", `Revision ${view.record.revision}: ${view.record.path.targetCount} targets generated. Review the geometry next.`, "success");
       router.push("/parse-map");
@@ -248,6 +266,14 @@ export default function AcquirePage() {
             <div className="flex flex-col gap-2">
               <label htmlFor="upload" className="text-[10px] font-bold uppercase text-on-surface-variant">Seam descriptor files (.txt)</label>
               <input id="upload" type="file" multiple accept=".txt,text/plain" onChange={onFiles} className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-on-primary" />
+              <label className="text-[10px] font-bold uppercase text-on-surface-variant flex flex-col gap-1">Where do these bytes come from?
+                <select aria-label="Upload provenance" value={uploadProvenance} onChange={(e) => setUploadProvenance(e.target.value)} className="normal-case font-normal bg-surface-container-highest border border-outline-variant rounded-md px-2 py-1.5 text-xs">
+                  <option value="user_supplied_unverified">Not verified (default)</option>
+                  <option value="recorded_device_export">Recorded export from the vision software (my statement)</option>
+                  <option value="synthetic_fixture">Synthetic test fixture</option>
+                </select>
+              </label>
+              <p className="text-[10px] text-on-surface-variant -mt-1">A declaration is recorded with your operator name. Synthetic fixtures can be packaged for offline evidence but not exported to a controller.</p>
               <button type="button" onClick={upload} disabled={uploading || !staged.some((f) => /\.txt$/i.test(f.name))} className="self-start bg-primary text-on-primary disabled:opacity-50 px-4 py-2 rounded-md text-xs font-bold">{uploading ? "Uploading…" : "Upload selected files"}</button>
             </div>
           )}
@@ -278,7 +304,7 @@ export default function AcquirePage() {
                   <tr key={r.key} className={`border-t border-outline-variant/30 align-top ${r.sourceId && r.sourceId === sourceId ? "bg-primary/5" : ""}`}>
                     <td className="py-1.5 pr-1">
                       {r.sourceId && (
-                        <input type="radio" name="source" aria-label={`Select ${r.name}`} checked={r.sourceId === sourceId} onChange={() => selectSource(r.sourceId)} />
+                        <input type="radio" name="source" aria-label={`Select ${r.name}`} checked={r.sourceId === sourceId} onChange={() => { selectSource(r.sourceId); usabilityLog.record("source_selected"); }} />
                       )}
                     </td>
                     <td className="py-1.5 pr-2 font-mono font-bold text-on-surface break-all">
@@ -306,6 +332,27 @@ export default function AcquirePage() {
                 <SourceKindBadge kind={sel.data.source.sourceKind} />
                 <span className="font-mono text-[10px] text-on-surface-variant" title={sel.data.source.sha256}>SHA-256 {shortHash(sel.data.source.sha256)}</span>
               </div>
+              {sel.data.provenance && (
+                <div className="text-[11px] flex flex-col gap-1 border border-outline-variant/50 rounded p-2">
+                  <span>
+                    <span className="font-bold">Provenance:</span> {PROVENANCE_LABEL[sel.data.provenance.effective.value] || sel.data.provenance.effective.value}
+                    {sel.data.provenance.effective.declared ? ` — declared by ${sel.data.provenance.effective.declaredBy}` : " (default; nothing declared)"}
+                    <span className="text-on-surface-variant"> · arrived by {sel.data.provenance.transport.replace(/_/g, " ")}</span>
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant">How a file arrived is not where it came from: copying a file into the watched folder does not make it a device capture.</span>
+                  <div className="flex flex-wrap gap-1 items-center">
+                    <select aria-label="Declare source provenance" value={declaring.value} onChange={(e) => setDeclaring((d) => ({ ...d, value: e.target.value }))} className="bg-surface-container-highest border border-outline-variant rounded px-1.5 py-1 text-[11px]">
+                      <option value="">Declare provenance…</option>
+                      <option value="recorded_device_export">Recorded device export (my statement)</option>
+                      <option value="user_supplied_unverified">User-supplied, not verified</option>
+                      <option value="synthetic_fixture">Synthetic test fixture</option>
+                    </select>
+                    <input aria-label="Provenance note" maxLength={500} placeholder="Note (optional)" value={declaring.note} onChange={(e) => setDeclaring((d) => ({ ...d, note: e.target.value }))} className="flex-1 min-w-[120px] bg-surface-container-highest border border-outline-variant rounded px-1.5 py-1 text-[11px]" />
+                    <button type="button" onClick={declareProvenance} disabled={!declaring.value || declaring.busy} className="bg-primary text-on-primary disabled:opacity-50 rounded px-2 py-1 font-bold">Record declaration</button>
+                  </div>
+                  <InlineError error={declaring.error} />
+                </div>
+              )}
               <DiagnosticsList diagnostics={selPreview && selPreview.diagnostics} emptyText="The descriptor parses without diagnostics. Geometry checks run when it is processed." />
               {selIsCurrentJob && <p className="text-[11px] text-on-surface-variant">A job for this source is already open (revision {job.record.revision}). Processing again creates a separate job.</p>}
               <InlineError error={processError} />

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/services/apiClient";
 import { Card, Icon, InlineError } from "@/components/StatusPanels";
+import CalibrationImport from "@/components/CalibrationImport";
 
 const STEPS = [
   "Obtain approval to operate the cell and follow its commissioning procedure; this page does not authorise motion.",
@@ -38,6 +39,8 @@ export default function CalibrationRoutinePage() {
             poses, solve a hand-eye transform or compute calibration error.
           </p>
         </header>
+
+        <CalibrationImport />
 
         {info.error && <InlineError error={info.error} onRetry={() => setNonce((n) => n + 1)} />}
         {!info.error && !d && <p className="text-xs text-on-surface-variant">Reading the archive…</p>}

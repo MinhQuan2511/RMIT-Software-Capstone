@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { VALIDATION_ROWS, describeState, TONE_CLASSES, SOURCE_KIND_LABEL, SEVERITY, shortHash } from "@/lib/statusLabels";
+import { VALIDATION_ROWS, describeState, TONE_CLASSES, SOURCE_KIND_LABEL, SEVERITY, shortHash, PROVENANCE_LABEL } from "@/lib/statusLabels";
 
 export function Icon({ name, className = "" }) {
   return <span className={`material-symbols-outlined ${className}`} aria-hidden="true">{name}</span>;
@@ -97,16 +97,26 @@ export function JobIdentityCard({ record, gates }) {
         <dd className="font-mono break-all">{record.source.displayName}</dd>
         <dt className="text-on-surface-variant font-bold">Source kind</dt>
         <dd><SourceKindBadge kind={record.source.kind} /></dd>
+        <dt className="text-on-surface-variant font-bold">Source provenance</dt>
+        <dd>{record.source.provenance ? `${PROVENANCE_LABEL[record.source.provenance.value] || record.source.provenance.value}${record.source.provenance.declared ? " (declared)" : " (default)"}` : "not recorded"}</dd>
         <dt className="text-on-surface-variant font-bold">Source SHA-256</dt>
         <dd className="font-mono" title={record.source.sha256}>{shortHash(record.source.sha256)}</dd>
         <dt className="text-on-surface-variant font-bold">Job / revision</dt>
         <dd className="font-mono break-all" title={record.jobId}>{record.jobId.slice(0, 12)}… · r{record.revision}{gates && !gates.isLatest ? ` (superseded by r${gates.latestRevision})` : ""}</dd>
         <dt className="text-on-surface-variant font-bold">Profile</dt>
         <dd className="font-mono">{record.profile.id}@{record.profile.version}</dd>
+        {record.profile.station && (
+          <>
+            <dt className="text-on-surface-variant font-bold">Station profile</dt>
+            <dd className="font-mono break-all">{record.profile.station.id}@{record.profile.station.version} · {record.profile.station.provenance}</dd>
+          </>
+        )}
         <dt className="text-on-surface-variant font-bold">Tool / wobj</dt>
         <dd className="font-mono">{record.profile.toolName} / {record.profile.wobjName}</dd>
         <dt className="text-on-surface-variant font-bold">Output SHA-256</dt>
         <dd className="font-mono" title={record.output.sha256}>{shortHash(record.output.sha256)}</dd>
+        <dt className="text-on-surface-variant font-bold">Configuration SHA-256</dt>
+        <dd className="font-mono" title={(gates && gates.identity && gates.identity.configurationSha256) || record.configurationSha256 || ""}>{shortHash((gates && gates.identity && gates.identity.configurationSha256) || record.configurationSha256)}</dd>
       </dl>
       {record.source.kind === "demo" && (
         <p className="mt-2 text-[11px] font-bold text-amber-900 bg-amber-100 border border-amber-400 rounded px-2 py-1">

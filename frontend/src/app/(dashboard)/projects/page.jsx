@@ -7,6 +7,7 @@ import { useToast } from "@/components/ToastContext";
 import { api } from "@/services/apiClient";
 import { Card, Icon, InlineError, SourceKindBadge } from "@/components/StatusPanels";
 import { shortHash } from "@/lib/statusLabels";
+import UsabilityCapture from "@/components/UsabilityCapture";
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
 
@@ -120,6 +121,8 @@ export default function ProjectsPage() {
             )}
           </Card>
         </div>
+
+        <UsabilityCapture />
 
         {projectId && (
           <Card title="Jobs in the selected project" icon="work_history" actions={

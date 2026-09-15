@@ -246,7 +246,8 @@ test('T24/T25 export outcomes are independent and truthful: save, idempotent sav
   const missing = await s.client.post(url, { outputSha256: rec.output.sha256, action: 'save', operator: s.operator });
   assert.equal(missing.body.outcome.saved.code, 'EXPORT_DIR_MISSING');
 
-  const evidence = await s.client.post(`/jobs/${rec.jobId}/revisions/1/evidence`, { operator: s.operator, result: 'pass', outputSha256: rec.output.sha256, robotStudioVersion: '2026.1', notes: 'Imported and syntax-checked manually.' });
+  // Evidence is bound to the output AND configuration identity (contract change in the offline milestone).
+  const evidence = await s.client.post(`/jobs/${rec.jobId}/revisions/1/evidence`, { operator: s.operator, result: 'pass', outputSha256: rec.output.sha256, configurationSha256: launched.body.gates.identity.configurationSha256, robotStudioVersion: '2026.1', notes: 'Imported and syntax-checked manually.' });
   assert.equal(evidence.status, 200);
   assert.equal(evidence.body.gates.validation.robotStudio, 'operator_reported_pass');
   assert.equal((await s.client.post(`/jobs/${rec.jobId}/revisions/1/evidence`, { operator: s.operator, result: 'pass', outputSha256: 'b'.repeat(64) })).status, 409);

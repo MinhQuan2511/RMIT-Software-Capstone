@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useWorkflowSession } from "./WorkflowSessionContext";
 import { useToast } from "./ToastContext";
 import { api } from "@/services/apiClient";
+import { usabilityLog } from "@/lib/usabilityLog";
 import { Card, Icon, InlineError } from "./StatusPanels";
 
 /**
@@ -36,6 +37,7 @@ export default function ReviewPanel({ nextPath = "/generate" }) {
       if (codes.length) view = await api.acknowledge(record.jobId, record.revision, codes, operator);
       view = await api.review(record.jobId, record.revision, "geometry", operator);
       applyJobView(view);
+      usabilityLog.record("geometry_reviewed", { revision: record.revision, profileId: record.profile.id });
       showToast("Geometry reviewed", `Revision ${record.revision} review recorded for ${operator}.`, "success");
       router.push(nextPath);
     } catch (err) {

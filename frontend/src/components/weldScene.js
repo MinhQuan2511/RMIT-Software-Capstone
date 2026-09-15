@@ -10,9 +10,27 @@
  */
 
 import * as THREE from "three";
-import { robotToViewPosition, torchMeshViewQuaternion, toolFrameViewQuaternion, toThreeOrder } from "../lib/viewTransform.js";
+import { robotToViewPosition, robotToViewDirection, torchMeshViewQuaternion, toolFrameViewQuaternion, toThreeOrder } from "../lib/viewTransform.js";
 import { arcPoint } from "../lib/playback.js";
 import { createSparkState, stepSparks } from "../lib/sparks.js";
+import { jointIndicators } from "../lib/orientationCheck.js";
+
+export const INDICATOR_COLOR = { travel: 0xf8fafc, normalA: 0x22c55e, normalB: 0xf59e0b, torch: 0xe879f9 };
+
+/** Arrow owned by this scene (line + cone), so disposal never touches shared geometry. */
+function ownedArrow(from, dirRobot, length, color, name) {
+  const g = new THREE.Group();
+  g.name = name;
+  const d = new THREE.Vector3(...robotToViewDirection(dirRobot)).normalize();
+  const to = from.clone().addScaledVector(d, length);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]), new THREE.LineBasicMaterial({ color }));
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(4, 12, 12), new THREE.MeshBasicMaterial({ color }));
+  cone.position.copy(to);
+  cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+  g.add(line, cone);
+  g.userData.direction = d.toArray();
+  return g;
+}
 
 const ROLE_COLOR = { air: 0x64748b, approach: 0xeab308, retract: 0xa855f7, point: 0x38bdf8, weld: 0x22d3ee };
 const TARGET_COLOR = { home: 0x06b6d4, approach: 0xeab308, weld_start: 0x22c55e, weld_via: 0xf97316, weld_end: 0xef4444, retract: 0xa855f7, point: 0x38bdf8 };
@@ -98,8 +116,28 @@ export function buildWeldScene({ record, aspect = 16 / 9 }) {
 
   const start = waypoints.find((w) => w.type === "weld_start");
   const end = waypoints.find((w) => w.type === "weld_end");
-  const illustrativeWorkpiece = record.geometry.plannedType === "straight" && start && end;
+  // Joint-relative revisions show the DECLARED joint frame instead of an illustrative workpiece,
+  // so the picture never implies a joint geometry other than the one the targets were planned for.
+  const indicators = jointIndicators(record);
+  const illustrativeWorkpiece = record.geometry.plannedType === "straight" && start && end && !indicators;
   if (illustrativeWorkpiece) scene.add(illustrativeTJoint(v3(start.pos), v3(end.pos)));
+
+  let jointFrame = null;
+  if (indicators) {
+    jointFrame = new THREE.Group();
+    jointFrame.name = "joint-frame";
+    const origin = v3(indicators.origin);
+    jointFrame.add(ownedArrow(origin, indicators.travel, 90, INDICATOR_COLOR.travel, "joint-travel"));
+    jointFrame.add(ownedArrow(origin, indicators.normalA, 70, INDICATOR_COLOR.normalA, "joint-normal-a"));
+    jointFrame.add(ownedArrow(origin, indicators.normalB, 70, INDICATOR_COLOR.normalB, "joint-normal-b"));
+    // Torch axis at each weld target: the stored quaternion applied to the declared approach axis,
+    // drawn ending at the target so it points the way the torch points.
+    for (const t of indicators.torchAxes) {
+      const tail = new THREE.Vector3(...robotToViewPosition(t.pos.map((c, i) => c - 110 * t.approach[i])));
+      jointFrame.add(ownedArrow(tail, t.approach, 110, INDICATOR_COLOR.torch, `torch-axis-${t.name}`));
+    }
+    scene.add(jointFrame);
+  }
 
   // Motion segments.
   let weldCurve = null;
@@ -169,6 +207,8 @@ export function buildWeldScene({ record, aspect = 16 / 9 }) {
     torch: torch.group,
     toolAxes,
     illustrativeWorkpiece: !!illustrativeWorkpiece,
+    jointFrame,
+    jointIndicators: indicators,
     hasWeld: !!weldCurve,
 
     /**
