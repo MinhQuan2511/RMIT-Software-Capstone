@@ -1,256 +1,114 @@
 "use client";
 
-import React, { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import StepperProgress from "@/components/StepperProgress";
-import Active3DViewport from "@/components/Active3DViewport";
-import { useToast } from "@/components/ToastContext";
-import { tracerStudioApi } from "@/services/tracerStudioApi";
+import React, { useEffect, useState } from "react";
+import { api } from "@/services/apiClient";
+import { Card, Icon, InlineError } from "@/components/StatusPanels";
+import CalibrationImport from "@/components/CalibrationImport";
 
-export default function CalibratePage() {
-  const router = useRouter();
-  const { showToast } = useToast();
-  
-  // Form input states
-  const [targetType, setTargetType] = useState("ChArUco Board");
-  const [squareSize, setSquareSize] = useState("30.0");
-  const [tcpX, setTcpX] = useState("0.00");
-  const [tcpY, setTcpY] = useState("150.00");
-  const [tcpZ, setTcpZ] = useState("45.50");
-  const [tcpRx, setTcpRx] = useState("90.0");
-  const [tcpRy, setTcpRy] = useState("0.0");
-  const [tcpRz, setTcpRz] = useState("-90.0");
+const STEPS = [
+  "Obtain approval to operate the cell and follow its commissioning procedure; this page does not authorise motion.",
+  "Open the archived station in RobotStudio and confirm it matches your robot, tool and calibration target setup.",
+  "Check the tooldata tWeldGun in CalibData against your physical torch calibration before any use.",
+  "Run the routine only in simulation first. At each 3 s dwell, capture an image with your camera software.",
+  "Record each capture together with the robot pose read from the controller or RobotStudio.",
+  "Solve the hand-eye transform and its error in your calibration software, and keep that evidence with the job.",
+];
 
-  const [calibrating, setCalibrating] = useState(false);
-  const [isCalibrated, setIsCalibrated] = useState(false);
+export default function CalibrationRoutinePage() {
+  const [info, setInfo] = useState({ data: null, error: null });
+  const [nonce, setNonce] = useState(0);
+  const [done, setDone] = useState({});
 
-  const handleGenerateRoutine = async () => {
-    setCalibrating(true);
-    showToast(
-      "🔄 Initializing Hand-Eye Calibration",
-      "Generating RAPID calibration trajectory paths...",
-      "info"
-    );
+  useEffect(() => {
+    let cancelled = false;
+    api.calibrationRoutine().then((d) => { if (!cancelled) setInfo({ data: d, error: null }); }).catch((err) => { if (!cancelled) setInfo({ data: null, error: err }); });
+    return () => { cancelled = true; };
+  }, [nonce]);
 
-    try {
-      const tcp = { x: tcpX, y: tcpY, z: tcpZ, rx: tcpRx, ry: tcpRy, rz: tcpRz };
-      const res = await tracerStudioApi.triggerCalibration(targetType, squareSize, tcp);
-      
-      if (res.success) {
-        setIsCalibrated(true);
-        showToast(
-          "✓ Calibration Routine Compiled",
-          `Captured ${res.pointsCaptured} calibration points. Reprojection Error: ${res.reprojectionError} mm.`,
-          "success"
-        );
-      }
-    } catch (e) {
-      console.error(e);
-      showToast("❌ Calibration Error", "Failed to compile hand-eye calibration routine.", "error");
-    } finally {
-      setCalibrating(false);
-    }
-  };
+  const d = info.data;
 
   return (
-    <div className="flex-1 flex overflow-hidden w-full h-full relative">
-      {/* Left Sidebar Panel (45%) */}
-      <aside className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[45%] h-full pt-6 px-5 gap-4 shrink-0 z-40 overflow-y-auto">
-        <div className="px-1 select-none">
-          <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
-            Automated Hand-Eye Calibration Wizard
-          </h2>
-          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
-            Configure and execute the calibration routine to align the robot's coordinate system with the 3D scanner.
+    <div className="flex-1 overflow-y-auto bg-background p-6">
+      <div className="max-w-5xl mx-auto flex flex-col gap-5">
+        <header>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Tool · independent of the workflow</p>
+          <h1 className="text-2xl font-extrabold text-on-surface">Calibration pose routine (archived station)</h1>
+          <p className="text-sm text-on-surface-variant mt-1 leading-relaxed">
+            A pre-existing, station-specific RobotStudio Pack&amp;Go that moves the robot through a set of poses with dwell times,
+            for operator-assisted camera calibration. This application does not generate the routine, capture images, read robot
+            poses, solve a hand-eye transform or compute calibration error.
           </p>
-        </div>
+        </header>
 
-        {/* Dynamic Workflow Progress Stepper */}
-        <StepperProgress />
+        <CalibrationImport />
 
-        <div className="h-px w-full bg-outline-variant/60 my-1 opacity-50"></div>
+        {info.error && <InlineError error={info.error} onRetry={() => setNonce((n) => n + 1)} />}
+        {!info.error && !d && <p className="text-xs text-on-surface-variant">Reading the archive…</p>}
 
-        {/* Calibration Controls */}
-        <div className="flex-1 flex flex-col gap-5 pb-6">
-          {/* Target Settings Card */}
-          <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
-              <span className="material-symbols-outlined text-[18px] text-primary">center_focus_strong</span>
-              Calibration Target Definition
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                  Target Type
-                </label>
-                <select
-                  value={targetType}
-                  onChange={(e) => setTargetType(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs text-on-surface font-semibold focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary appearance-none cursor-pointer"
-                >
-                  <option>ChArUco Board</option>
-                  <option>Checkerboard</option>
-                  <option>Circle Grid</option>
-                </select>
+        {d && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <Card title="Facts read from the archive" icon="inventory">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12px]">
+                <dt className="font-bold text-on-surface-variant">Robtargets declared</dt><dd>{d.routine.robtargetCount} (home + {d.routine.nonHomePoseCount} poses)</dd>
+                <dt className="font-bold text-on-surface-variant">Motion statements</dt><dd>{d.routine.motionStatementCount} ({Object.entries(d.routine.motionInstructions).map(([k, v]) => `${v}× ${k}`).join(", ")})</dd>
+                <dt className="font-bold text-on-surface-variant">Distinct destinations</dt><dd>{d.routine.distinctDestinations}{d.routine.repeatedDestinations.length ? ` · repeated: ${d.routine.repeatedDestinations.map((r) => `${r.target} ×${r.visits}`).join(", ")}` : ""}</dd>
+                <dt className="font-bold text-on-surface-variant">Dwell statements</dt><dd>{d.routine.waitStatementCount} × WaitTime {d.routine.waitSeconds.join("/")} s = {d.routine.programmedDwellSeconds} s programmed dwell</dd>
+                <dt className="font-bold text-on-surface-variant">Tool / work object</dt><dd className="font-mono">{d.routine.tools.join(", ")} / {d.routine.workObjects.join(", ")}</dd>
+                <dt className="font-bold text-on-surface-variant">Speeds</dt><dd className="font-mono">{d.routine.speeds.join(", ")}</dd>
+                <dt className="font-bold text-on-surface-variant">Configurations used</dt><dd className="font-mono">{d.routine.configurationsUsed.join(" ")}</dd>
+                <dt className="font-bold text-on-surface-variant">Archive</dt><dd className="font-mono break-all">{d.archive.fileName} · {(d.archive.sizeBytes / 1024).toFixed(1)} KB · SHA-256 {d.archive.sha256.slice(0, 16)}…</dd>
+              </dl>
+              <p className="text-[11px] text-on-surface-variant mt-2">{d.routine.dwellNote}</p>
+            </Card>
+
+            <Card title="Tool data stored in the archive" icon="build">
+              {d.tooldata ? (
+                <>
+                  <p className="text-[12px] font-mono">PERS tooldata {d.tooldata.name}: TCP [{d.tooldata.translationMm.join(", ")}] mm · orientation [{d.tooldata.orientation.join(", ")}] · mass {d.tooldata.massKg} kg</p>
+                  <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-300 rounded p-2 mt-2">{d.tooldata.note}</p>
+                </>
+              ) : <p className="text-xs">No tooldata found.</p>}
+              <div className="mt-4 border-t border-outline-variant/40 pt-3">
+                <p className="text-[11px] text-on-surface-variant mb-2">{d.archive.sensitiveNote}</p>
+                <a href="/stations/auto_calib.rspag" download className="inline-flex items-center gap-2 bg-primary text-on-primary rounded-lg px-3 py-2 text-xs font-bold uppercase">
+                  <Icon name="download" className="text-[16px]" />Download the archived station
+                </a>
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
-                  Square Size (mm)
-                </label>
-                <input
-                  type="number"
-                  value={squareSize}
-                  onChange={(e) => setSquareSize(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-3 py-2 text-xs font-mono text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                />
+            </Card>
+
+            <Card title="Programmed sequence (PROC main)" icon="format_list_numbered" className="lg:col-span-2">
+              <div className="overflow-x-auto max-h-[320px]">
+                <table className="w-full text-[11px] font-mono">
+                  <thead><tr className="text-left text-on-surface-variant border-b border-outline-variant/40"><th scope="col" className="pr-3">#</th><th scope="col" className="pr-3">Statement</th><th scope="col" className="pr-3">Target / seconds</th><th scope="col">Speed · zone</th></tr></thead>
+                  <tbody>
+                    {d.routine.steps.map((s) => (
+                      <tr key={s.index} className="border-b border-outline-variant/15">
+                        <td className="pr-3">{s.index}</td>
+                        <td className="pr-3">{s.kind === "move" ? s.instruction : s.kind === "wait" ? "WaitTime" : "other"}</td>
+                        <td className="pr-3">{s.kind === "move" ? s.target : s.kind === "wait" ? `${s.seconds} s` : s.text}</td>
+                        <td>{s.kind === "move" ? `${s.speed} · ${s.zone}` : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
+            </Card>
+
+            <Card title="Operator checklist (this page only; not saved)" icon="checklist" className="lg:col-span-2">
+              <ol className="flex flex-col gap-2">
+                {STEPS.map((s, i) => (
+                  <li key={s}>
+                    <label className="flex items-start gap-2 text-[12px]">
+                      <input type="checkbox" checked={!!done[i]} onChange={(e) => setDone((x) => ({ ...x, [i]: e.target.checked }))} className="mt-0.5" />
+                      <span>{i + 1}. {s}</span>
+                    </label>
+                  </li>
+                ))}
+              </ol>
+              <p className="text-[11px] text-on-surface-variant mt-3">Automatic capture, pose readback, hand-eye solving and error measurement are not implemented. External calibration evidence produced elsewhere remains valid evidence; it simply is not produced by this application.</p>
+            </Card>
           </div>
-
-          {/* TCP Settings Card */}
-          <div className="bg-surface border border-outline-variant rounded-xl p-4 shadow-[0_4px_12px_rgba(0,0,0,0.03)] relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
-            <h3 className="font-bold text-xs text-on-surface mb-3.5 flex items-center gap-2 select-none uppercase tracking-wide">
-              <span className="material-symbols-outlined text-[18px] text-primary">precision_manufacturing</span>
-              Tool Center Point (TCP) Offset
-            </h3>
-            <div className="grid grid-cols-3 gap-3 mb-3">
-              <div>
-                <label className="block font-mono text-[10px] text-on-surface-variant mb-1">X (mm)</label>
-                <input
-                  type="number"
-                  value={tcpX}
-                  onChange={(e) => setTcpX(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2.5 py-1.5 font-mono text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-              </div>
-              <div>
-                <label className="block font-mono text-[10px] text-on-surface-variant mb-1">Y (mm)</label>
-                <input
-                  type="number"
-                  value={tcpY}
-                  onChange={(e) => setTcpY(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2.5 py-1.5 font-mono text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-              </div>
-              <div>
-                <label className="block font-mono text-[10px] text-on-surface-variant mb-1">Z (mm)</label>
-                <input
-                  type="number"
-                  value={tcpZ}
-                  onChange={(e) => setTcpZ(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2.5 py-1.5 font-mono text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block font-mono text-[10px] text-on-surface-variant mb-1">Rx (deg)</label>
-                <input
-                  type="number"
-                  value={tcpRx}
-                  onChange={(e) => setTcpRx(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2.5 py-1.5 font-mono text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-              </div>
-              <div>
-                <label className="block font-mono text-[10px] text-on-surface-variant mb-1">Ry (deg)</label>
-                <input
-                  type="number"
-                  value={tcpRy}
-                  onChange={(e) => setTcpRy(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2.5 py-1.5 font-mono text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-              </div>
-              <div>
-                <label className="block font-mono text-[10px] text-on-surface-variant mb-1">Rz (deg)</label>
-                <input
-                  type="number"
-                  value={tcpRz}
-                  onChange={(e) => setTcpRz(e.target.value)}
-                  className="w-full bg-surface-container-highest border border-outline-variant rounded-md px-2.5 py-1.5 font-mono text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Action Trigger Buttons */}
-          <div className="mt-auto flex flex-col gap-4">
-            <button
-              onClick={handleGenerateRoutine}
-              disabled={calibrating}
-              className="w-full bg-primary hover:bg-surface-tint text-on-primary rounded-xl p-4 flex flex-col items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-sm cursor-pointer border border-transparent disabled:opacity-50 disabled:cursor-not-allowed group select-none"
-            >
-              <div className="flex items-center gap-2">
-                <span className={`material-symbols-outlined text-[24px] ${calibrating ? "animate-spin" : "group-hover:rotate-180 transition-transform duration-500"}`}>
-                  sync
-                </span>
-                <span className="font-extrabold text-sm uppercase tracking-wider">
-                  {calibrating ? "Generating Trajectory..." : "Generate Calibration Routine"}
-                </span>
-              </div>
-              <span className="text-[10px] text-on-primary/75 text-center max-w-[85%] font-medium leading-normal">
-                Generates custom RAPID routine to move and rotate the robot wrist around the calibration target board.
-              </span>
-            </button>
-
-            <div className="flex gap-4">
-              {/* Explicit Back Button to previous step */}
-              <Link
-                href="/projects"
-                className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high rounded-xl py-3 font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm select-none"
-              >
-                <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-                &lt; Back to Workspace
-              </Link>
-              
-              <button
-                onClick={() => router.push("/configure")}
-                disabled={!isCalibrated}
-                className={`flex-1 rounded-xl py-3 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all select-none ${
-                  isCalibrated
-                    ? "bg-primary text-on-primary hover:bg-surface-tint cursor-pointer"
-                    : "bg-surface-variant border border-outline-variant text-on-surface-variant opacity-40 cursor-not-allowed"
-                }`}
-              >
-                Next Step
-                <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* Right Viewport (55%) */}
-      <div className="flex-1 h-full relative">
-        <Active3DViewport title="Calibration Hub Visualizer [ABB Robot Hand-Eye]">
-          {({ pointCloudActive }) => (
-            isCalibrated ? (
-              // Active simulation state render
-              <div className="relative w-full h-full flex flex-col justify-center items-center">
-                <div className="absolute inset-0 bg-[#000]/10 rounded-xl overflow-hidden flex flex-col justify-center items-center pointer-events-none">
-                  {pointCloudActive && (
-                    <div className="absolute w-[260px] h-[260px] border border-primary/40 rounded-full animate-ping opacity-10"></div>
-                  )}
-                  {/* Mock wireframe path rendering */}
-                  <svg className="w-80 h-80 text-primary opacity-80" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3 3" />
-                    <circle cx="50" cy="50" r="30" fill="none" stroke="currentColor" strokeWidth="1" />
-                    <line x1="50" y1="10" x2="50" y2="90" stroke="currentColor" strokeWidth="0.5" />
-                    <line x1="10" y1="50" x2="90" y2="50" stroke="currentColor" strokeWidth="0.5" />
-                    <circle cx="50" cy="50" r="2" fill="currentColor" />
-                    <path d="M 30,50 L 50,30 L 70,50 L 50,70 Z" fill="none" stroke="#ba1a1a" strokeWidth="1.5" className="animate-pulse" />
-                  </svg>
-                  <div className="absolute bottom-16 bg-surface/90 backdrop-blur-sm border border-outline-variant px-4 py-2 rounded-lg text-center text-xs font-bold text-on-surface select-none shadow-sm pointer-events-auto">
-                    🚀 Calibration Trajectory Loaded: 12 TCP poses defined.
-                  </div>
-                </div>
-              </div>
-            ) : null
-          )}
-        </Active3DViewport>
+        )}
       </div>
     </div>
   );

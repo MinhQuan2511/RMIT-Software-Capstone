@@ -1,21 +1,22 @@
 {
   "name": "rmit-vertex-dynamics-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Robotics Software Backend Service - Matrix Transformations, Hand-Eye Kinematics, RAPID Compiler, TCP Socket Bridge",
+  "description": "Local Express service: seam descriptor ingestion, validation, path planning, motion-only ABB RAPID generation and job records",
   "main": "server.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "js-yaml": "^4.1.0",
-    "mathjs": "^14.0.1",
-    "multer": "^1.4.5-lts.1",
-    "rmit-vertex-dynamics-monorepo": "file:.."
+    "multer": "^1.4.5-lts.1"
   }
 }

@@ -2,86 +2,79 @@
 
 import React from "react";
 import Link from "next/link";
+import { useBackendHealth } from "@/components/useBackendHealth";
+import { useWorkflowSession } from "@/components/WorkflowSessionContext";
+
+function StatusRow({ icon, label, value, tone, detail }) {
+  const tones = { ok: "bg-emerald-100 text-emerald-800", bad: "bg-red-100 text-red-800", neutral: "bg-slate-100 text-slate-700" };
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg border border-surface-container bg-surface-container-lowest gap-3">
+      <div className="flex items-center gap-3 text-on-surface-variant">
+        <span className="material-symbols-outlined text-[18px]" aria-hidden="true">{icon}</span>
+        <div className="flex flex-col">
+          <span className="font-medium text-sm">{label}</span>
+          {detail && <span className="text-[10px]">{detail}</span>}
+        </div>
+      </div>
+      <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] uppercase ${tones[tone]}`}>{value}</span>
+    </div>
+  );
+}
 
 export default function WelcomePage() {
+  const health = useBackendHealth();
+  const { operator } = useWorkflowSession();
+
   return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-center relative overflow-hidden bg-background">
-      {/* Background Layer */}
-      <div className="absolute inset-0 z-0 tech-grid opacity-60"></div>
-      <div className="absolute inset-0 z-0 bg-gradient-to-br from-surface-bright via-background to-surface-container-low opacity-90"></div>
-      <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-primary-fixed rounded-full blur-[120px] opacity-20 -translate-y-1/2 translate-x-1/3"></div>
+    <div className="min-h-screen w-full flex flex-col items-center justify-center relative overflow-y-auto bg-background py-10">
+      <div className="absolute inset-0 z-0 tech-grid opacity-60" aria-hidden="true"></div>
+      <div className="absolute inset-0 z-0 bg-gradient-to-br from-surface-bright via-background to-surface-container-low opacity-90" aria-hidden="true"></div>
 
-      {/* Main Content Area */}
-      <div className="relative z-10 w-full max-w-[1400px] px-margin-desktop md:px-12 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center mt-[-5%]">
-        {/* Left Side: Typography & Branding */}
-        <div className="lg:col-span-8 flex flex-col gap-6 select-none">
+      <main className="relative z-10 w-full max-w-[1400px] px-6 md:px-12 grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+        <div className="lg:col-span-7 flex flex-col gap-5">
           <div className="flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-[0.1em]">
-            <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-              school
-            </span>
-            <span>RMIT University Capstone 2026</span>
+            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">school</span>
+            <span>RMIT University Capstone 2026 · 3D Vision for Automated Structural Welding</span>
           </div>
-          <h1 className="text-4xl md:text-[56px] md:leading-[1.1] font-extrabold text-on-surface tracking-tight">
+          <h1 className="text-4xl md:text-[52px] md:leading-[1.1] font-extrabold text-on-surface tracking-tight">
             Vertex Dynamics: <br />
-            <span className="text-primary bg-clip-text text-transparent bg-gradient-to-r from-primary to-surface-tint">
-              Scan-to-Path Hub
-            </span>
+            <span className="text-primary">Scan-to-Path Hub</span>
           </h1>
-          <p className="text-base sm:text-lg text-on-surface-variant max-w-2xl mt-4">
-            Next-Generation 3D Vision &amp; Industrial Robot Integration. A unified environment for scanning, path
-            generation, and precision control.
+          <p className="text-base sm:text-lg text-on-surface-variant max-w-2xl">
+            A local, single-operator tool that imports seam descriptor files, validates them, and generates a candidate
+            motion-only ABB RAPID module for manual validation in RobotStudio.
           </p>
-        </div>
-
-        {/* Right Side: Status Card */}
-        <div className="lg:col-span-4 flex justify-end">
-          <div className="w-full max-w-sm bg-surface rounded-xl border border-outline-variant shadow-[0_8px_32px_rgba(0,0,0,0.04)] overflow-hidden backdrop-blur-sm bg-opacity-95">
-            <div className="px-6 py-5 border-b border-surface-variant bg-surface-container-lowest flex items-center gap-3 select-none">
-              <div className="w-8 h-8 rounded-lg bg-surface-container-low flex items-center justify-center text-primary border border-outline-variant/30">
-                <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                  dns
-                </span>
-              </div>
-              <h2 className="font-bold text-on-surface text-base">System Status Overview</h2>
-            </div>
-            <div className="p-6 flex flex-col gap-4 bg-surface select-none">
-              <div className="flex items-center justify-between p-3 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <div className="flex items-center gap-3 text-on-surface-variant">
-                  <span className="material-symbols-outlined text-[18px]">photo_camera</span>
-                  <span className="font-medium text-sm">Camera Status</span>
-                </div>
-                <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-secondary-container bg-opacity-30">
-                  <span className="w-2 h-2 rounded-full bg-secondary block"></span>
-                  <span className="font-bold text-[10px] uppercase text-secondary">Standby</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg border border-surface-container bg-surface-container-lowest">
-                <div className="flex items-center gap-3 text-on-surface-variant">
-                  <span className="material-symbols-outlined text-[18px]">precision_manufacturing</span>
-                  <span className="font-medium text-sm">Robot Bridge</span>
-                </div>
-                <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-error-container bg-opacity-30">
-                  <span className="w-2 h-2 rounded-full bg-error block animate-pulse"></span>
-                  <span className="font-bold text-[10px] uppercase text-error">Offline</span>
-                </div>
-              </div>
-            </div>
+          <ul className="text-sm text-on-surface-variant list-disc pl-5 max-w-2xl flex flex-col gap-1">
+            <li>No camera, TracerStudio or robot-controller connection is part of this application.</li>
+            <li>No reachability, collision, singularity or welding-process checks are performed.</li>
+            <li>A downloaded module is not approval for physical execution.</li>
+          </ul>
+          <div>
+            <Link href={operator ? "/projects" : "/login"} className="inline-flex items-center gap-3 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-7 py-3.5 rounded-lg shadow-lg font-bold text-xs tracking-wider uppercase focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              {operator ? `Continue as ${operator}` : "Start local session"}
+              <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+            </Link>
           </div>
         </div>
-      </div>
 
-      {/* Bottom: Action Button */}
-      <div className="absolute bottom-20 w-full flex justify-center z-20 px-margin-desktop">
-        <Link
-          href="/login"
-          className="group flex items-center gap-4 bg-primary hover:bg-on-primary-fixed-variant text-on-primary px-8 py-4 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1"
-        >
-          <span className="font-bold text-xs tracking-wider uppercase">Enter Control System</span>
-          <span className="material-symbols-outlined transition-transform duration-300 group-hover:translate-x-1">
-            arrow_forward
-          </span>
-        </Link>
-      </div>
+        <section className="lg:col-span-5 w-full max-w-md justify-self-end bg-surface rounded-xl border border-outline-variant shadow-sm overflow-hidden" aria-label="System status">
+          <div className="px-6 py-4 border-b border-surface-variant bg-surface-container-lowest">
+            <h2 className="font-bold text-on-surface text-base">System status</h2>
+            <p className="text-[11px] text-on-surface-variant">Only the backend row is measured; the other rows describe what is integrated.</p>
+          </div>
+          <div className="p-6 flex flex-col gap-3">
+            <StatusRow
+              icon="dns"
+              label="Backend API"
+              detail={health.checkedAt ? `Checked ${health.checkedAt.toLocaleTimeString()} via GET /api/health` : "Checking…"}
+              value={health.status === "online" ? "Online" : health.status === "offline" ? "Disconnected" : "Checking"}
+              tone={health.status === "online" ? "ok" : health.status === "offline" ? "bad" : "neutral"}
+            />
+            <StatusRow icon="photo_camera" label="Camera / TracerStudio" detail="Seam data arrives as exported files" value="Not integrated" tone="neutral" />
+            <StatusRow icon="precision_manufacturing" label="Robot controller" detail="No controller connection exists" value="Not integrated" tone="neutral" />
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

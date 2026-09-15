@@ -1,0 +1,649 @@
+/**
+ * Job service: source → validated geometry → path → RAPID → immutable revision,
+ * plus the gates that decide what an operator may do with a revision.
+ *
+ * Every gate is evaluated from stored records on every request. No browser
+ * flag, localStorage value or earlier response can authorise an export.
+ */
+
+const { parseFeatureText } = require('../parsers/curveParser');
+const { planPointList, validatePointList } = require('../parsers/pointListAdapter');
+const { resolveProfile } = require('../kinematics/profiles');
+const { planSeam, JOINT_PROFILE_ID } = require('../kinematics/pathPlanner');
+const { PLANNER_VERSION } = require('../kinematics/jointOrientation');
+const { compileRapidModule } = require('../compiler/rapidCompiler');
+const { inspectCalibrationFile } = require('../calibration/calibrationInspector');
+const { buildEvidencePackage } = require('../packages/evidencePackage');
+const { diagnostic, AppError } = require('../util/errors');
+const { canonicalJson, sha256 } = require('../util/hash');
+const { SCHEMA_VERSION, DEFAULT_PROVENANCE } = require('./jobStore');
+const { buildWorkpieceModel, UNKNOWN: UNKNOWN_WORKPIECE } = require('../geometry/workpiece');
+const { UNKNOWN: UNKNOWN_ENVELOPE, envelopeSha256 } = require('../geometry/toolEnvelope');
+const { evaluateClearance, METHOD_VERSION: CLEARANCE_METHOD_VERSION, STATUS: CLEARANCE } = require('../geometry/clearance');
+
+const OPERATOR = /^[\p{L}\p{N} ._'@-]{1,64}$/u;
+const CALIBRATION_ID = /^cal_[a-f0-9]{24}$/;
+const FEATURE_PROFILES = ['fixed-base-quaternion', JOINT_PROFILE_ID];
+
+const hr = () => process.hrtime.bigint();
+const ms = (start) => Number(hr() - start) / 1e6;
+
+function operatorName(value) {
+  if (typeof value !== 'string' || !OPERATOR.test(value.trim())) {
+    throw new AppError(422, 'OPERATOR_REQUIRED', 'An operator name (1–64 letters, digits, spaces, . _ \' @ -) is required for attribution.');
+  }
+  return value.trim();
+}
+
+const ASSUMPTION_ACK = (profile) => ({
+  code: 'COORDINATE_AND_TOOL_ASSUMPTIONS',
+  message:
+    `Coordinates are pre-calibrated robot-base millimetres used through ${profile.wobjName}; no camera-to-robot ` +
+    `transform is applied. ${profile.toolName} and ${profile.wobjName} must already exist on the controller; the module does not declare them.`,
+});
+
+function decodeText(buf) {
+  const text = buf.toString('utf-8');
+  if (text.includes('�') || text.includes('\u0000')) return null;
+  return text;
+}
+
+/** Validation preview of a stored source, without planning. */
+function previewSource(meta, content) {
+  if (meta.contentType === 'feature-text') {
+    const text = decodeText(content);
+    if (text === null) return { ok: false, kind: 'feature-text', diagnostics: [diagnostic('PARSE_NOT_UTF8', 'error', 'The file is not valid UTF-8 text.')] };
+    const r = parseFeatureText(text);
+    return { ok: r.ok, kind: 'feature-text', seamType: r.seam ? r.seam.type : null, diagnostics: r.diagnostics.slice(0, 50) };
+  }
+  try {
+    const r = validatePointList(JSON.parse(content.toString('utf-8')));
+    return { ok: r.ok, kind: 'point-list', rowCount: r.points ? r.points.length : null, diagnostics: r.diagnostics.slice(0, 50) };
+  } catch {
+    return { ok: false, kind: 'point-list', diagnostics: [diagnostic('POINT_LIST_SCHEMA', 'error', 'Stored point list is not valid JSON.')] };
+  }
+}
+
+/** Profile-declaration acknowledgements for joint-relative revisions. */
+function jointAcknowledgementDiagnostics(profile, plan) {
+  const station = profile.station;
+  const tc = station.toolConvention;
+  const out = [diagnostic('JOINT_FRAME_OPERATOR_DECLARED', 'warning',
+    `The joint frame (${plan.orientation.jointFrame.source}) is an operator declaration; it is not measured from the scan. Confirm it matches the physical joint before relying on the orientation.`,
+    { requiresAcknowledgement: true })];
+  if (station.provenance === 'synthetic_fixture') {
+    out.push(diagnostic('STATION_PROFILE_SYNTHETIC', 'warning',
+      `Station profile ${station.id}@${station.version} is a SYNTHETIC fixture with invented tool and work-object names. This revision is for offline evidence only; download, save and RobotStudio launch are blocked.`,
+      { requiresAcknowledgement: true }));
+  } else {
+    out.push(diagnostic('STATION_PROFILE_OPERATOR_DECLARED', 'warning',
+      `The tool-axis convention (approach ${tc.approachAxis}, roll ${tc.rollAxis} ${tc.rollReference}) and names ${station.toolName}/${station.wobjName} were declared by the operator and are not verified by this application.`,
+      { requiresAcknowledgement: true }));
+  }
+  return out;
+}
+
+function jointHeaderLines(profile, plan) {
+  const o = plan.orientation;
+  const tc = profile.station.toolConvention;
+  const num = (x) => String(Number(x.toFixed(4)));
+  const lines = [
+    `Orientation: joint-relative straight fillet (experimental), ${o.plannerVersion}`,
+    `Joint: ${o.jointFrame.source} (operator declaration, not measured from the scan)`,
+    `Requested work/push angle: ${num(o.requested.workAngleDeg)} / ${num(o.requested.pushAngleDeg)} deg (mathematical check only)`,
+    `Tool convention: approach ${tc.approachAxis}, roll ${tc.rollAxis} ${tc.rollReference}`,
+    `Station profile: ${profile.station.id}@${profile.station.version} (${profile.station.provenance})`,
+  ];
+  if (profile.station.provenance === 'synthetic_fixture') lines.push('SYNTHETIC FIXTURE CONFIGURATION: offline evidence only, not for any controller');
+  return lines;
+}
+
+/** The identity of everything, other than the source bytes, that a validation result depends on. */
+function buildConfiguration(profile, resolved, generatorVersion, calibration) {
+  const isJoint = profile.id === JOINT_PROFILE_ID;
+  const configuration = {
+    schema: 'vd-configuration@1',
+    motionProfile: { id: profile.id, version: profile.version, experimental: !!profile.experimental },
+    parameters: resolved.parameters,
+    parametersSha256: resolved.parametersSha256,
+    toolName: profile.toolName,
+    wobjName: profile.wobjName,
+    toolConvention: isJoint ? profile.station.toolConvention
+      : profile.id === 'point-list-linear' ? 'not_applicable: orientation comes from the point list' : 'not_applicable: fixed base-frame orientation',
+    station: isJoint ? profile.station : null,
+    joint: isJoint ? profile.joint : null,
+    orientationRequest: isJoint ? profile.orientationRequest : null,
+    calibrationReference: calibration,
+    plannerVersion: isJoint ? PLANNER_VERSION : 'vd-path-planner (no joint-relative orientation)',
+    generatorVersion,
+    // Geometry-dependent identity: a change here invalidates reviews and clearance evidence even if the module bytes do not change.
+    workpiece: profile.workpiece || null,
+    toolEnvelope: profile.toolEnvelope || null,
+    traversal: profile.traversal || null,
+    clearanceMethodVersion: CLEARANCE_METHOD_VERSION,
+  };
+  return { configuration, configurationSha256: sha256(canonicalJson(configuration)) };
+}
+
+/** Diagnostics and acknowledgements derived from the stored clearance record. */
+function clearanceDiagnostics(workpiece, envelope, clearance) {
+  const out = [];
+  const o = clearance.overall;
+  if (workpiece.provenance === 'illustrative') {
+    out.push(diagnostic('WORKPIECE_GEOMETRY_ILLUSTRATIVE', 'warning',
+      'The workpiece is ILLUSTRATIVE geometry. Clearance results describe the illustrative plates only; the real workpiece is not assessed.', { requiresAcknowledgement: true }));
+  } else if (workpiece.provenance === 'operator_defined') {
+    out.push(diagnostic('WORKPIECE_GEOMETRY_OPERATOR_DECLARED', 'warning',
+      `The ${workpiece.arrangement} plate dimensions, normals and placement are an operator declaration, not a measurement. Clearance results hold only for these declared plates and the modeled scope.`, { requiresAcknowledgement: true }));
+  }
+  if (workpiece.kind !== 'unknown' && envelope.kind === 'tool_frame_capsules' && envelope.provenance === 'synthetic_fixture') {
+    out.push(diagnostic('TOOL_ENVELOPE_SYNTHETIC', 'warning',
+      'The torch envelope uses SYNTHETIC dimensions. Torch-body results cannot support any claim about a real torch.', { requiresAcknowledgement: true }));
+  }
+  if (o.result === CLEARANCE.INTERSECTION) {
+    out.push(diagnostic('WORKPIECE_INTERSECTION_DETECTED', 'warning',
+      `${o.intersectionCount} intersection finding(s) with the ${workpiece.label.toLowerCase()}. ${o.blocksExport
+        ? 'Ordinary module download, save and RobotStudio launch are blocked for this revision. The plan is kept for inspection and the offline evidence package keeps the failure. Correct the dimensions, welding side, traversal or approach/retract stand-offs as a new revision.'
+        : 'Illustrative geometry: this does not block export, and the real workpiece remains not assessed.'}`,
+      { details: { findings: clearance.findings.filter((f) => f.result === CLEARANCE.INTERSECTION).slice(0, 12).map((f) => ({ id: f.id, scope: f.scope, subject: f.subject, part: f.part, kind: f.kind })) } }));
+  } else if (o.result === CLEARANCE.INCONCLUSIVE && workpiece.provenance === 'operator_defined') {
+    out.push(diagnostic('WORKPIECE_CLEARANCE_INCONCLUSIVE', 'warning',
+      `${o.inconclusiveCount} clearance finding(s) are inconclusive (within the ${clearance.tolerances.grazingToleranceMm} mm grazing tolerance of the declared plates). They are not a pass.`, { requiresAcknowledgement: true }));
+  }
+  return out;
+}
+
+/**
+ * Configuration identity of a stored revision. Revisions written before
+ * configuration records existed get a derived identity from what they did store.
+ */
+function configurationIdentity(record) {
+  if (record.configuration && record.configurationSha256) {
+    return { sha256: record.configurationSha256, derived: false, configuration: record.configuration };
+  }
+  const configuration = {
+    schema: 'vd-configuration-derived@1',
+    note: 'Derived for a revision stored before configuration records existed.',
+    motionProfile: { id: record.profile.id, version: record.profile.version },
+    parameters: record.parameters,
+    parametersSha256: record.parametersSha256,
+    toolName: record.profile.toolName,
+    wobjName: record.profile.wobjName,
+    generatorVersion: record.output.generatorVersion,
+  };
+  return { sha256: sha256(canonicalJson(configuration)), derived: true, configuration };
+}
+
+/**
+ * Pure pipeline. Returns stage + diagnostics on failure; never a fallback.
+ * @param {object} context  { provenance, calibration: {meta, inspection} | null } resolved by the caller
+ */
+function runPipeline(meta, content, parameters, context = {}) {
+  const tTotal = hr();
+  const isPoints = meta.contentType === 'point-list';
+  const resolved = resolveProfile(parameters || {}, isPoints ? 'point-list-linear' : 'fixed-base-quaternion');
+  if (!resolved.ok) return { ok: false, stage: 'parameters', diagnostics: resolved.diagnostics };
+  if (!(isPoints ? ['point-list-linear'] : FEATURE_PROFILES).includes(resolved.profile.id)) {
+    return { ok: false, stage: 'parameters', diagnostics: [diagnostic('PARAM_PROFILE_MISMATCH', 'error', `Profile '${resolved.profile.id}' cannot process a ${meta.contentType} source.`, { field: 'profileId' })] };
+  }
+  const profile = resolved.profile;
+
+  let calibration = null;
+  if (profile.calibrationReference) {
+    const c = context.calibration;
+    if (!c || c.meta.id !== profile.calibrationReference.calibrationId) {
+      return { ok: false, stage: 'parameters', diagnostics: [diagnostic('PARAM_CALIBRATION_UNKNOWN', 'error', 'The referenced calibration file is not in the store.', { field: 'calibrationReference' })] };
+    }
+    calibration = {
+      calibrationId: c.meta.id,
+      sha256: c.meta.sha256,
+      displayName: c.meta.displayName,
+      numericalCheck: c.inspection.numericalCheck,
+      physicalCalibrationStatus: 'not_validated',
+      applied: false,
+      note: 'Referenced for provenance only. The transform is not applied; coordinates are still read as robot-base millimetres.',
+    };
+  }
+
+  const timings = {};
+  const diagnostics = [];
+  let coordinates;
+
+  let plan;
+  const tParse = hr();
+  if (isPoints) {
+    let doc;
+    try { doc = JSON.parse(content.toString('utf-8')); } catch { doc = null; }
+    timings.parseMs = ms(tParse);
+    const tPlan = hr();
+    plan = planPointList(doc, profile);
+    timings.planMs = ms(tPlan);
+    diagnostics.push(...plan.diagnostics);
+    if (!plan.ok) return { ok: false, stage: 'input', diagnostics, timings };
+    coordinates = { units: 'mm', unitsProvenance: 'point_list', frame: 'robot_base', frameProvenance: 'assumed' };
+  } else {
+    const text = decodeText(content);
+    if (text === null) return { ok: false, stage: 'input', diagnostics: [diagnostic('PARSE_NOT_UTF8', 'error', 'The file is not valid UTF-8 text.')] };
+    const parsed = parseFeatureText(text);
+    timings.parseMs = ms(tParse);
+    diagnostics.push(...parsed.diagnostics);
+    if (!parsed.ok) return { ok: false, stage: 'input', diagnostics, timings };
+    const tPlan = hr();
+    plan = planSeam(parsed.seam, profile);
+    timings.planMs = ms(tPlan);
+    diagnostics.push(...plan.diagnostics);
+    if (!plan.ok) return { ok: false, stage: 'geometry', diagnostics, timings };
+    if (profile.id === JOINT_PROFILE_ID) diagnostics.push(...jointAcknowledgementDiagnostics(profile, plan));
+    const s = parsed.seam;
+    coordinates = { units: s.units, unitsProvenance: s.unitsProvenance, frame: s.frame, frameProvenance: s.frameProvenance };
+  }
+
+  const tCompile = hr();
+  const compiled = compileRapidModule({
+    waypoints: plan.waypoints,
+    segments: plan.segments,
+    profile,
+    provenance: {
+      sourceSha256: meta.sha256,
+      profileId: `${profile.id}@${profile.version}`,
+      ...(profile.id === JOINT_PROFILE_ID ? { headerLines: jointHeaderLines(profile, plan) } : {}),
+    },
+  });
+  timings.compileMs = ms(tCompile);
+  diagnostics.push(...compiled.diagnostics);
+  if (!compiled.ok) return { ok: false, stage: 'generation', diagnostics, timings, prechecks: compiled.prechecks };
+  const { configuration, configurationSha256 } = buildConfiguration(profile, resolved, compiled.generatorVersion, calibration);
+
+  // Diagnostic only: computed from the stored plan after the module bytes exist, and never changes them.
+  const tClearance = hr();
+  const workpiece = plan.workpiece || buildWorkpieceModel({ ...UNKNOWN_WORKPIECE });
+  const toolEnvelope = profile.toolEnvelope || { ...UNKNOWN_ENVELOPE };
+  const clearance = evaluateClearance({
+    waypoints: plan.waypoints, segments: plan.segments, workpiece, toolEnvelope,
+    identity: { configurationSha256, outputSha256: compiled.outputSha256, parametersSha256: resolved.parametersSha256 },
+  });
+  timings.clearanceMs = ms(tClearance);
+  diagnostics.push(...(profile.parameterWarnings || []), ...clearanceDiagnostics(workpiece, toolEnvelope, clearance));
+  timings.pipelineMs = ms(tTotal);
+
+  return { ok: true, resolved, profile, plan, compiled, coordinates, diagnostics, timings, configuration, configurationSha256, calibration, provenance: context.provenance || null, workpiece, toolEnvelope, clearance };
+}
+
+function buildRecord(ctx, meta, result, mode) {
+  const { profile, plan, compiled, resolved, coordinates, diagnostics, timings, configuration, configurationSha256, calibration, provenance, workpiece, toolEnvelope, clearance } = result;
+  const required = [ASSUMPTION_ACK(profile), ...diagnostics.filter((d) => d.requiresAcknowledgement).map((d) => ({ code: d.code, message: d.message }))];
+  const effective = provenance ? provenance.effective : { value: DEFAULT_PROVENANCE, declared: false, declaredBy: null, at: null };
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    jobId: ctx.jobId,
+    projectId: ctx.projectId,
+    revision: ctx.revision,
+    createdAt: ctx.createdAt,
+    mode,
+    source: {
+      id: meta.id,
+      sha256: meta.sha256,
+      sizeBytes: meta.sizeBytes,
+      kind: meta.sourceKind,
+      transport: meta.sourceKind,
+      provenance: { value: effective.value, declared: effective.declared, declaredBy: effective.declaredBy, at: effective.at },
+      contentType: meta.contentType,
+      displayName: meta.displayName,
+      importedAt: meta.importedAt,
+    },
+    coordinates: {
+      ...coordinates,
+      targetWorkObject: profile.wobjName,
+      calibration: 'not_applied — input assumed pre-calibrated in the robot base frame',
+      calibrationReference: calibration,
+    },
+    parameters: resolved.parameters,
+    parametersSha256: resolved.parametersSha256,
+    configuration,
+    configurationSha256,
+    profile: {
+      id: profile.id,
+      version: profile.version,
+      label: profile.label,
+      description: profile.description,
+      experimental: !!profile.experimental,
+      frameConvention: profile.frameConvention,
+      toolName: profile.toolName,
+      wobjName: profile.wobjName,
+      toolDeclaration: profile.toolDeclaration,
+      configuration: profile.configuration || null,
+      configurationNote: profile.configurationNote || null,
+      clearancesNote: profile.clearances ? 'Fixed geometric heuristic; not collision-checked.' : null,
+      station: profile.station ? { id: profile.station.id, version: profile.station.version, provenance: profile.station.provenance, label: profile.station.label, exportPolicy: profile.station.exportPolicy } : null,
+    },
+    geometry: plan.geometry,
+    orientation: plan.orientation || { mode: mode === 'testing' ? 'point_list_explicit' : 'fixed_base_quaternion_legacy' },
+    // Canonical workpiece model: the clearance checks and the browser preview both consume these stored plates.
+    workpiece,
+    toolEnvelope: { definition: toolEnvelope, sha256: envelopeSha256(toolEnvelope) },
+    clearance,
+    path: {
+      waypoints: plan.waypoints,
+      segments: plan.segments,
+      targetCount: plan.waypoints.length,
+      instructionCount: plan.segments.length,
+    },
+    output: {
+      format: 'abb-rapid-mod',
+      moduleName: 'Module1',
+      code: compiled.code,
+      sha256: compiled.outputSha256,
+      sizeBytes: Buffer.byteLength(compiled.code, 'utf-8'),
+      generatorVersion: compiled.generatorVersion,
+      scope: 'motion_only',
+    },
+    diagnostics,
+    requiredAcknowledgements: required,
+    prechecks: compiled.prechecks,
+    timings: {
+      unit: 'ms',
+      boundary: 'Server-side wall time measured with process.hrtime.bigint(); excludes file I/O, HTTP and browser time.',
+      ...timings,
+    },
+  };
+}
+
+const isSyntheticSource = (record) => !!(record.source.provenance && record.source.provenance.value === 'synthetic_fixture');
+const isSyntheticConfiguration = (record) => !!(record.configuration && record.configuration.station && record.configuration.station.provenance === 'synthetic_fixture');
+
+/** Operator-reported RobotStudio evidence that applies to exactly this output AND configuration. */
+function boundEvidence(record, review, identity) {
+  return review.externalEvidence.filter((e) => e.kind === 'robotstudio_manual' && e.outputSha256 === record.output.sha256
+    && (e.configurationSha256 === identity.sha256 || (identity.derived && e.configurationSha256 === undefined)));
+}
+
+function evaluate(job, record, review) {
+  const identity = configurationIdentity(record);
+  const missingAcks = record.requiredAcknowledgements.filter((a) => !review.acknowledgements[a.code]).map((a) => a.code);
+  const prechecksPassed = record.prechecks.every((p) => p.status === 'passed');
+  const latest = job.latestRevision === record.revision;
+  const evidence = boundEvidence(record, review, identity);
+  const lastEvidence = evidence[evidence.length - 1];
+
+  const generateReasons = [];
+  if (!review.geometryReview) generateReasons.push({ code: 'GEOMETRY_NOT_REVIEWED', message: 'Review the geometry and diagnostics on Parse & Map first.' });
+
+  const common = [];
+  if (!latest) common.push({ code: 'REVISION_SUPERSEDED', message: `Revision ${record.revision} is superseded by revision ${job.latestRevision}.` });
+  if (!prechecksPassed) common.push({ code: 'PRECHECKS_FAILED', message: 'Application prechecks did not pass.' });
+  if (missingAcks.length) common.push({ code: 'ACKNOWLEDGEMENT_MISSING', message: `Acknowledge: ${missingAcks.join(', ')}.` });
+  if (!review.geometryReview) common.push({ code: 'GEOMETRY_NOT_REVIEWED', message: 'Geometry has not been reviewed.' });
+  if (!review.moduleReview) common.push({ code: 'MODULE_NOT_REVIEWED', message: 'The generated module has not been reviewed on Generate.' });
+
+  const demo = record.source.kind === 'demo'
+    ? [{ code: 'DEMO_SOURCE', message: 'Demo samples are for inspection only and cannot be exported, packaged or sent to RobotStudio.' }] : [];
+  const synthetic = [];
+  if (isSyntheticSource(record)) synthetic.push({ code: 'SYNTHETIC_SOURCE', message: 'The source is declared a synthetic fixture. Download, save and RobotStudio launch are blocked; use the offline evidence package.' });
+  if (isSyntheticConfiguration(record)) synthetic.push({ code: 'SYNTHETIC_CONFIGURATION', message: 'The station/tool profile is a synthetic fixture. Download, save and RobotStudio launch are blocked; use the offline evidence package.' });
+
+  // A definite intersection with OPERATOR-DEFINED plates blocks ordinary export (not the evidence package).
+  const clearance = record.clearance || null;
+  const geometryBlock = [];
+  if (clearance && clearance.overall.geometryProvenance === 'operator_defined' && clearance.overall.result === CLEARANCE.INTERSECTION) {
+    geometryBlock.push({ code: 'WORKPIECE_INTERSECTION_DETECTED', message: `The stored plan intersects the operator-defined workpiece (${clearance.overall.intersectionCount} finding(s)). Download, save and RobotStudio launch are blocked; the offline evidence package keeps the failure.` });
+  }
+
+  const exportReasons = [...demo, ...synthetic, ...geometryBlock, ...common];
+  const packageReasons = [...demo, ...common];
+  const station = record.configuration && record.configuration.station;
+  const workpieceClearance = !clearance ? 'not_recorded'
+    : clearance.overall.geometryProvenance === 'operator_defined' ? clearance.overall.result
+      : clearance.overall.geometryProvenance === 'illustrative' ? 'not_assessed_illustrative_geometry' : 'not_assessed';
+
+  return {
+    latestRevision: job.latestRevision,
+    isLatest: latest,
+    identity: { outputSha256: record.output.sha256, configurationSha256: identity.sha256, configurationDerived: identity.derived },
+    generate: { allowed: generateReasons.length === 0, reasons: generateReasons },
+    export: { allowed: exportReasons.length === 0, reasons: exportReasons },
+    package: { allowed: packageReasons.length === 0, reasons: packageReasons },
+    acknowledgements: { required: record.requiredAcknowledgements.map((a) => a.code), given: Object.keys(review.acknowledgements), missing: missingAcks },
+    validation: {
+      input: 'passed',
+      geometry: 'passed',
+      applicationPrechecks: prechecksPassed ? 'passed' : 'failed',
+      orientationCheck: record.orientation && record.orientation.recovered ? record.orientation.recovered.status : 'not_applicable',
+      operatorReview: review.moduleReview ? 'module_reviewed' : review.geometryReview ? 'geometry_reviewed' : 'not_reviewed',
+      configurationProvenance: station ? station.provenance : 'legacy_fixed_profile',
+      sourceProvenance: record.source.provenance ? record.source.provenance.value : 'provenance_not_recorded',
+      robotStudio: lastEvidence ? (lastEvidence.result === 'pass' ? 'operator_reported_pass' : lastEvidence.result === 'fail' ? 'operator_reported_fail' : 'not_run') : 'not_run',
+      calibrationTransform: 'not_applied',
+      controllerConnection: 'not_integrated',
+      physicalCommissioning: 'not_recorded',
+      reachability: 'not_evaluated',
+      workpieceClearance,
+      collision: 'not_evaluated',
+      singularities: 'not_evaluated',
+    },
+  };
+}
+
+function createJobService({ store, exportWriter, launcher, config, logger = console, sourceIdentity = null, clock = () => new Date() }) {
+  async function loadSource(sourceId) {
+    const { meta, content } = await store.getSourceContent(sourceId);
+    return { meta, content };
+  }
+
+  /** Resolves stored context the pure pipeline needs: provenance and a referenced calibration. */
+  async function pipelineContext(meta, parameters) {
+    const provenance = await store.getSourceProvenance(meta.id);
+    const ref = parameters && parameters.calibrationReference;
+    let calibration = null;
+    if (ref && typeof ref === 'object' && CALIBRATION_ID.test(ref.calibrationId)) {
+      try {
+        const c = await store.getCalibrationContent(ref.calibrationId);
+        calibration = { meta: c.meta, inspection: inspectCalibrationFile({ content: c.content, displayName: c.meta.displayName }) };
+      } catch (err) {
+        if (!(err instanceof AppError) || err.status !== 404) throw err;
+      }
+    }
+    return { provenance, calibration };
+  }
+
+  const modeOf = (meta) => (meta.contentType === 'point-list' ? 'testing' : 'file_import');
+
+  function failure(result) {
+    const labels = { parameters: 'The parameters are invalid.', input: 'The selected input is invalid.', geometry: 'The seam geometry is not supported.', generation: 'Module generation failed its checks.' };
+    return new AppError(422, 'PROCESSING_FAILED', `${labels[result.stage] || 'Processing failed.'} No module was generated.`, {
+      diagnostics: result.diagnostics,
+      details: { stage: result.stage },
+    });
+  }
+
+  async function view(jobId, revision) {
+    const [job, record, review] = await Promise.all([store.getJob(jobId), store.getRevision(jobId, revision), store.getReview(jobId, revision)]);
+    return { job, record, review, gates: evaluate(job, record, review) };
+  }
+
+  return {
+    previewSource,
+    runPipeline,
+    evaluate,
+    configurationIdentity,
+
+    async createJob({ projectId, sourceId, parameters }) {
+      await store.getProject(projectId);
+      const { meta, content } = await loadSource(sourceId);
+      const result = runPipeline(meta, content, parameters, await pipelineContext(meta, parameters));
+      if (!result.ok) throw failure(result);
+      const { job, record } = await store.createJobWithRevision({
+        projectId,
+        buildRecord: (ctx) => buildRecord(ctx, meta, result, modeOf(meta)),
+      });
+      return view(job.id, record.revision);
+    },
+
+    async reprocess({ jobId, baseRevision, parameters, sourceId }) {
+      if (!Number.isInteger(baseRevision)) throw new AppError(422, 'BASE_REVISION_REQUIRED', 'baseRevision (the revision you are looking at) is required.');
+      const job = await store.getJob(jobId);
+      const latest = await store.getRevision(jobId, job.latestRevision);
+      const { meta, content } = await loadSource(sourceId || latest.source.id);
+      if (baseRevision !== job.latestRevision) {
+        throw new AppError(409, 'REVISION_CONFLICT', `This job is at revision ${job.latestRevision}, not ${baseRevision}. Reload before reprocessing.`, { details: { latestRevision: job.latestRevision } });
+      }
+      const result = runPipeline(meta, content, parameters, await pipelineContext(meta, parameters));
+      if (!result.ok) throw failure(result);
+      // Reuse only when nothing that identifies the revision changed: source bytes, declared
+      // provenance, configuration (incl. profile metadata) and output bytes.
+      const provenanceValue = result.provenance.effective.value;
+      const sameSource = meta.id === latest.source.id && latest.source.provenance && latest.source.provenance.value === provenanceValue;
+      const legacySame = !latest.configurationSha256 && meta.id === latest.source.id && !latest.source.provenance
+        && !result.provenance.effective.declared && !result.calibration
+        && result.resolved.parametersSha256 === latest.parametersSha256 && result.compiled.outputSha256 === latest.output.sha256;
+      if ((sameSource && latest.configurationSha256 === result.configurationSha256 && latest.output.sha256 === result.compiled.outputSha256) || legacySame) {
+        return { ...(await view(jobId, latest.revision)), reused: true };
+      }
+      const record = await store.appendRevision(jobId, { baseRevision, buildRecord: (ctx) => buildRecord(ctx, meta, result, modeOf(meta)) });
+      await store.touchProject(job.projectId);
+      return { ...(await view(jobId, record.revision)), reused: false };
+    },
+
+    view,
+
+    async acknowledge({ jobId, revision, codes, operator }) {
+      const who = operatorName(operator);
+      const record = await store.getRevision(jobId, revision);
+      if (!Array.isArray(codes) || codes.length === 0) throw new AppError(422, 'ACK_CODES_REQUIRED', 'codes must be a non-empty array.');
+      const valid = new Set(record.requiredAcknowledgements.map((a) => a.code));
+      const unknown = codes.filter((c) => !valid.has(c));
+      if (unknown.length) throw new AppError(422, 'ACK_CODE_UNKNOWN', `Not required for this revision: ${unknown.join(', ')}.`);
+      await store.updateReview(jobId, revision, (r) => {
+        for (const c of codes) if (!r.acknowledgements[c]) r.acknowledgements[c] = { by: who, at: clock().toISOString() };
+        return r;
+      });
+      return view(jobId, revision);
+    },
+
+    async review({ jobId, revision, stage, operator }) {
+      const who = operatorName(operator);
+      const current = await view(jobId, revision);
+      const { record, review, gates } = current;
+      if (!gates.isLatest) throw new AppError(409, 'REVISION_SUPERSEDED', `Revision ${revision} is superseded by revision ${gates.latestRevision}.`);
+      if (stage === 'geometry') {
+        if (gates.acknowledgements.missing.length) {
+          throw new AppError(422, 'ACKNOWLEDGEMENT_MISSING', `Acknowledge before confirming the review: ${gates.acknowledgements.missing.join(', ')}.`);
+        }
+        if (!review.geometryReview) await store.updateReview(jobId, revision, (r) => { r.geometryReview = { by: who, at: clock().toISOString() }; return r; });
+      } else if (stage === 'module') {
+        if (!review.geometryReview) throw new AppError(422, 'GEOMETRY_NOT_REVIEWED', 'Review the geometry before the module.');
+        if (record.prechecks.some((p) => p.status !== 'passed')) throw new AppError(422, 'PRECHECKS_FAILED', 'Application prechecks did not pass.');
+        if (!review.moduleReview) {
+          const identity = configurationIdentity(record);
+          await store.updateReview(jobId, revision, (r) => {
+            r.moduleReview = { by: who, at: clock().toISOString(), outputSha256: record.output.sha256, configurationSha256: identity.sha256 };
+            return r;
+          });
+        }
+      } else {
+        throw new AppError(422, 'REVIEW_STAGE_INVALID', "stage must be 'geometry' or 'module'.");
+      }
+      return view(jobId, revision);
+    },
+
+    /** Operator-reported RobotStudio evidence, bound to the output AND configuration identity. */
+    async recordEvidence({ jobId, revision, operator, result, notes = '', robotStudioVersion = '', robotWareVersion = '', robotVariant = '', outputSha256, configurationSha256 }) {
+      const who = operatorName(operator);
+      const record = await store.getRevision(jobId, revision);
+      const identity = configurationIdentity(record);
+      if (outputSha256 !== record.output.sha256) throw new AppError(409, 'OUTPUT_HASH_MISMATCH', 'Evidence must name the exact output hash of this revision.');
+      if (configurationSha256 !== identity.sha256) {
+        throw new AppError(409, 'CONFIGURATION_HASH_MISMATCH', 'Evidence must name the exact configuration hash of this revision; a module hash alone does not identify the tool, work object or profile used.');
+      }
+      if (!['pass', 'fail', 'not_run'].includes(result)) throw new AppError(422, 'EVIDENCE_RESULT_INVALID', "result must be 'pass', 'fail' or 'not_run'.");
+      for (const [k, v] of Object.entries({ notes, robotStudioVersion, robotWareVersion, robotVariant })) {
+        if (typeof v !== 'string' || v.length > (k === 'notes' ? 2000 : 80)) throw new AppError(422, 'EVIDENCE_FIELD_INVALID', `${k} is too long or not text.`);
+      }
+      await store.updateReview(jobId, revision, (r) => {
+        r.externalEvidence.push({
+          kind: 'robotstudio_manual', result, notes, robotStudioVersion, robotWareVersion, robotVariant, outputSha256, configurationSha256,
+          reportedBy: who, reportedAt: clock().toISOString(), evidenceProvenance: 'operator_reported', note: 'Operator-reported; not verified by this application.',
+        });
+        return r;
+      });
+      return view(jobId, revision);
+    },
+
+    /** Returns the stored module bytes only if the export gate passes and the hash matches. */
+    async moduleForExport({ jobId, revision, outputSha256 }) {
+      const v = await view(jobId, revision);
+      if (outputSha256 !== v.record.output.sha256) throw new AppError(409, 'OUTPUT_HASH_MISMATCH', 'The requested output hash does not match this revision.');
+      if (!v.gates.export.allowed) {
+        throw new AppError(403, 'EXPORT_BLOCKED', 'This revision cannot be exported yet.', { details: { reasons: v.gates.export.reasons } });
+      }
+      const { code } = await store.getModuleBytes(jobId, revision);
+      return { code, view: v };
+    },
+
+    async exportModule({ jobId, revision, outputSha256, action, operator }) {
+      const who = operatorName(operator);
+      if (action !== 'save' && action !== 'save_and_launch') throw new AppError(422, 'EXPORT_ACTION_INVALID', "action must be 'save' or 'save_and_launch'.");
+      const { code, view: v } = await this.moduleForExport({ jobId, revision, outputSha256 });
+      const outcome = { downloadedByBrowser: 'not_tracked_by_server', saved: null, launchRequested: action === 'save_and_launch', launch: null };
+
+      const fileName = exportWriter.safeModuleFileName(jobId, revision, v.record.output.sha256);
+      try {
+        outcome.saved = await exportWriter.saveModuleFile({ exportDir: config.exportDir, fileName, code, expectedSha256: v.record.output.sha256 });
+      } catch (err) {
+        outcome.saved = { status: 'failed', code: err.code || 'EXPORT_WRITE_FAILED', message: err instanceof AppError ? err.message : 'The module could not be written.' };
+        if (!(err instanceof AppError)) logger.error('export write failed', err);
+      }
+
+      if (action === 'save_and_launch') {
+        if (!outcome.saved || (outcome.saved.status !== 'saved' && outcome.saved.status !== 'already_saved')) {
+          outcome.launch = { status: 'not_attempted', message: 'RobotStudio was not started because the module file could not be saved.' };
+        } else {
+          outcome.launch = await launcher.launch(outcome.saved.absolutePath);
+        }
+      }
+
+      await store.updateReview(jobId, revision, (r) => {
+        r.exports.push({ at: clock().toISOString(), by: who, action, outputSha256, configurationSha256: v.gates.identity.configurationSha256, saved: outcome.saved && outcome.saved.status, fileName: outcome.saved && outcome.saved.fileName, launch: outcome.launch && outcome.launch.status });
+        return r;
+      });
+
+      if (outcome.saved) delete outcome.saved.absolutePath;
+      return { outcome, ...(await view(jobId, revision)) };
+    },
+
+    /**
+     * Offline evidence package. Allowed for synthetic configurations and fixtures (that is its purpose),
+     * never for demo samples, superseded revisions or unreviewed revisions.
+     */
+    async evidencePackage({ jobId, revision, outputSha256, configurationSha256, operator }) {
+      const who = operatorName(operator);
+      const v = await view(jobId, revision);
+      const identity = configurationIdentity(v.record);
+      if (outputSha256 !== v.record.output.sha256) throw new AppError(409, 'OUTPUT_HASH_MISMATCH', 'The requested output hash does not match this revision.');
+      if (configurationSha256 !== identity.sha256) throw new AppError(409, 'CONFIGURATION_HASH_MISMATCH', 'The requested configuration hash does not match this revision.');
+      if (!v.gates.package.allowed) throw new AppError(403, 'PACKAGE_BLOCKED', 'An evidence package cannot be created for this revision yet.', { details: { reasons: v.gates.package.reasons } });
+
+      const { code } = await store.getModuleBytes(jobId, revision);
+      const { meta, content } = await store.getSourceContent(v.record.source.id);
+      const provenanceNow = await store.getSourceProvenance(meta.id);
+      let calibration = null;
+      const ref = v.record.configuration && v.record.configuration.calibrationReference;
+      if (ref) {
+        const c = await store.getCalibrationContent(ref.calibrationId);
+        if (c.meta.sha256 !== ref.sha256) throw new AppError(500, 'CALIBRATION_INTEGRITY', 'The referenced calibration bytes changed.');
+        calibration = { meta: c.meta, inspection: inspectCalibrationFile({ content: c.content, displayName: c.meta.displayName }) };
+      }
+      const generatedAt = clock();
+      const pkg = buildEvidencePackage({
+        job: v.job, record: v.record, review: v.review, gates: v.gates, sourceMeta: meta, sourceContent: content, provenanceNow,
+        moduleCode: code, calibration, identity, generator: sourceIdentity || { note: 'source identity unavailable' }, operator: who, generatedAt,
+      });
+      await store.updateReview(jobId, revision, (r) => {
+        r.exports.push({ at: generatedAt.toISOString(), by: who, action: 'offline_evidence_package', outputSha256, configurationSha256, packageSha256: pkg.packageSha256, fileName: pkg.fileName });
+        return r;
+      });
+      return pkg;
+    },
+  };
+}
+
+module.exports = { createJobService, previewSource, runPipeline, evaluate, operatorName, configurationIdentity, jointHeaderLines, clearanceDiagnostics };

@@ -1,229 +1,194 @@
 "use client";
 
-import React from "react";
-import Link from "next/link";
+import React, { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import StepperProgress from "@/components/StepperProgress";
-import { useToast } from "@/components/ToastContext";
+import TargetTable from "@/components/TargetTable";
+import ReviewPanel from "@/components/ReviewPanel";
+import MotionProfileForm from "@/components/MotionProfileForm";
+import { useWorkflowSession } from "@/components/WorkflowSessionContext";
 import { useTestingWorkflow } from "@/components/TestingWorkflowContext";
+import { useToast } from "@/components/ToastContext";
+import { api } from "@/services/apiClient";
+import { FIELDS, suggestMapping, suggestOrientation, buildPointListDocument } from "@/lib/pointListMapping";
+import { Card, DiagnosticsList, Icon, InlineError, JobIdentityCard } from "@/components/StatusPanels";
+
+function MappingEditor({ sheet, onStored }) {
+  const { showToast } = useToast();
+  const [mapping, setMapping] = useState(() => suggestMapping(sheet.headers));
+  const [orientation, setOrientation] = useState(() => suggestOrientation(suggestMapping(sheet.headers)));
+  const [configuration, setConfiguration] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const built = useMemo(() => buildPointListDocument({ rows: sheet.rows, mapping, orientationConvention: orientation, configurationPolicy: configuration }), [sheet, mapping, orientation, configuration]);
+  const visibleFields = FIELDS.filter((f) => !f.group || f.group === orientation || (f.group === "columns" && configuration === "columns"));
+
+  const store = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.createPointListSource(sheet.fileName, built.document);
+      showToast(r.preview.ok ? "Point list stored" : "Point list stored with errors", r.preview.ok ? `${r.preview.rowCount} rows validated by the backend.` : "Fix the listed rows and store again.", r.preview.ok ? "success" : "error");
+      onStored(r);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title={`Map columns of ${sheet.fileName}`} icon="table_view">
+      <fieldset className="flex flex-col gap-2 mb-3">
+        <legend className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Orientation is given as</legend>
+        <label className="text-xs flex items-center gap-2"><input type="radio" name="orient" checked={orientation === "quaternion_wxyz"} onChange={() => setOrientation("quaternion_wxyz")} />Quaternion q1..q4 = [w, x, y, z] (norm must be within 0.001 of 1)</label>
+        <label className="text-xs flex items-center gap-2"><input type="radio" name="orient" checked={orientation === "euler_zyx_deg"} onChange={() => setOrientation("euler_zyx_deg")} />Euler Rx, Ry, Rz in degrees, R = Rz·Ry·Rx</label>
+      </fieldset>
+      <fieldset className="flex flex-col gap-2 mb-3">
+        <legend className="text-[10px] font-bold uppercase text-on-surface-variant mb-1">Robot configuration</legend>
+        <label className="text-xs flex items-center gap-2"><input type="radio" name="conf" checked={configuration === "fixed_zero"} onChange={() => setConfiguration("fixed_zero")} />Use [0,0,0,0] for every target (not solved; validate in RobotStudio)</label>
+        <label className="text-xs flex items-center gap-2"><input type="radio" name="conf" checked={configuration === "columns"} onChange={() => setConfiguration("columns")} />Read cf1, cf4, cf6, cfx columns</label>
+      </fieldset>
+      <div className="grid grid-cols-2 gap-2">
+        {visibleFields.map((f) => (
+          <label key={f.key} className="text-[11px] font-bold flex flex-col gap-0.5">{f.label}{f.required ? " *" : ""}
+            <select value={mapping[f.key] || ""} onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value || null }))} className="font-normal font-mono border border-outline-variant rounded px-1.5 py-1 bg-surface-container-highest">
+              <option value="">— not mapped —</option>
+              {sheet.headers.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+      {built.problems.length > 0 && <ul className="mt-3 text-[11px] text-amber-900 bg-amber-50 border border-amber-300 rounded p-2 list-disc pl-5">{built.problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+      {built.document && <p className="mt-2 text-[11px] text-on-surface-variant">{built.document.rows.length} rows will be stored{built.skippedEmptyRows ? `; ${built.skippedEmptyRows} empty row(s) skipped` : ""}. Values are validated by the backend, not defaulted.</p>}
+      <InlineError error={error} />
+      <button type="button" onClick={store} disabled={!built.document || busy} className="mt-3 w-full bg-primary disabled:bg-surface-container-high disabled:text-on-surface-variant text-on-primary rounded-lg py-2.5 text-xs font-bold uppercase">{busy ? "Storing…" : "Store point list as a source"}</button>
+    </Card>
+  );
+}
 
 export default function TestingPreviewPage() {
   const router = useRouter();
+  const { projectId, sourceId, selectSource, job, applyJobView, closeJob } = useWorkflowSession();
+  const { sheet, image } = useTestingWorkflow();
   const { showToast } = useToast();
-  const { csvData, csvFileName, imageDataUrl, imageFileName } = useTestingWorkflow();
+  const [stored, setStored] = useState({ key: null, data: null, error: null });
+  const [profiles, setProfiles] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
 
-  // If no data, redirect
-  if (!csvData || csvData.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-background">
-        <div className="text-center p-12 max-w-md">
-          <span className="material-symbols-outlined text-primary/30 text-6xl mb-4 block">warning</span>
-          <h3 className="text-lg font-extrabold text-on-surface mb-2">No Data Uploaded</h3>
-          <p className="text-sm text-on-surface-variant mb-6">
-            Please upload a CSV file and image first.
-          </p>
-          <Link
-            href="/testing-upload"
-            className="bg-primary text-on-primary px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider inline-flex items-center gap-2 hover:bg-surface-tint transition-colors"
-          >
-            <span className="material-symbols-outlined text-base">arrow_back</span>
-            Go to Upload
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  const pointSource = sourceId && sourceId.startsWith("src_points_") ? sourceId : null;
 
-  // Detect columns from first row
-  const columns = Object.keys(csvData[0]);
+  useEffect(() => {
+    if (!pointSource) return undefined;
+    const controller = new AbortController();
+    api.getSource(pointSource, controller.signal).then((d) => setStored({ key: pointSource, data: d, error: null })).catch((err) => { if (!err.cancelled) setStored({ key: pointSource, data: null, error: err }); });
+    return () => controller.abort();
+  }, [pointSource]);
 
-  // Calculate coordinate range stats
-  const stats = {};
-  ["X", "Y", "Z"].forEach((axis) => {
-    if (csvData[0][axis] !== undefined) {
-      const values = csvData.map((r) => parseFloat(r[axis]) || 0);
-      stats[axis] = {
-        min: Math.min(...values).toFixed(2),
-        max: Math.max(...values).toFixed(2),
-      };
+  useEffect(() => {
+    let cancelled = false;
+    api.profiles().then((d) => { if (!cancelled) setProfiles(d); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const storedView = stored.key === pointSource ? stored : { data: null, error: null };
+  const testingJob = job && job.record.mode === "testing" ? job : null;
+
+  const createJob = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const view = await api.createJob(projectId, pointSource);
+      applyJobView(view);
+      showToast("Job created", `Revision ${view.record.revision}: ${view.record.path.targetCount} targets. Review below.`, "success");
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
     }
-  });
+  };
+
+  const reprocess = async (parameters) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const view = await api.reprocess(testingJob.record.jobId, testingJob.record.revision, parameters);
+      applyJobView(view);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="flex-1 flex overflow-hidden w-full h-full relative">
-      {/* Left Panel: Coordinates Table (50%) */}
-      <aside className="bg-surface-container-low border-r border-outline-variant shadow-sm flex flex-col w-[50%] h-full pt-6 px-5 gap-4 shrink-0 z-40 overflow-hidden">
-        <div className="px-1 select-none">
-          <h2 className="text-xl font-extrabold text-on-surface tracking-tight">
-            Welding Path Preview
-          </h2>
-          <p className="text-xs text-on-surface-variant font-medium mt-1.5 leading-relaxed">
-            Parsed {csvData.length} welding coordinates from <strong>{csvFileName}</strong>. Review before generating RAPID code.
-          </p>
+    <div className="flex-1 flex overflow-hidden w-full h-full relative min-h-0">
+      <aside className="bg-surface-container-low border-r border-outline-variant flex flex-col w-[46%] min-w-[420px] h-full pt-5 px-5 gap-3 shrink-0 overflow-y-auto">
+        <div>
+          <h1 className="text-xl font-extrabold text-on-surface tracking-tight">Testing mode: map and review</h1>
+          <p className="text-xs text-on-surface-variant mt-1">Map the columns, store the point list, create a job, then review it like any other revision.</p>
         </div>
-
-        {/* Dynamic Workflow Progress Stepper */}
         <StepperProgress />
 
-        <div className="h-px w-full bg-outline-variant/60 my-1 opacity-50"></div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-3 gap-3 shrink-0 select-none">
-          <div className="bg-surface border border-outline-variant rounded-lg p-3 text-center">
-            <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Total Points</span>
-            <span className="text-lg font-extrabold text-primary">{csvData.length}</span>
-          </div>
-          {stats.X && (
-            <div className="bg-surface border border-outline-variant rounded-lg p-3 text-center">
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">X Range</span>
-              <span className="text-[11px] font-mono font-bold text-on-surface">{stats.X.min} → {stats.X.max}</span>
-            </div>
-          )}
-          {stats.Y && (
-            <div className="bg-surface border border-outline-variant rounded-lg p-3 text-center">
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Y Range</span>
-              <span className="text-[11px] font-mono font-bold text-on-surface">{stats.Y.min} → {stats.Y.max}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Scrollable Coordinate Table */}
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          <div className="bg-inverse-surface rounded-xl border border-outline shadow-sm overflow-hidden flex-1 flex flex-col min-h-0">
-            {/* Table Header */}
-            <div className="bg-on-surface px-4 py-2.5 flex items-center justify-between border-b border-outline/30 shrink-0 select-none">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-inverse-on-surface text-sm">table_chart</span>
-                <span className="font-label-md text-xs font-bold text-inverse-on-surface uppercase tracking-wider">
-                  Coordinate Data Table
-                </span>
-              </div>
-              <span className="bg-surface-container-lowest text-on-surface font-label-md text-[9px] font-extrabold px-2 py-0.5 rounded-sm uppercase tracking-wide">
-                {csvData.length} ROWS
-              </span>
-            </div>
-
-            {/* Table Content */}
-            <div className="flex-1 overflow-auto code-scroll">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-[#2d3038] text-inverse-on-surface">
-                    <th className="px-3 py-2 text-left font-bold text-[10px] uppercase tracking-wider border-b border-outline/20 w-12">
-                      #
-                    </th>
-                    {columns.map((col) => (
-                      <th
-                        key={col}
-                        className="px-3 py-2 text-left font-bold text-[10px] uppercase tracking-wider border-b border-outline/20"
-                      >
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {csvData.map((row, idx) => (
-                    <tr
-                      key={idx}
-                      className={`border-b border-outline/10 transition-colors hover:bg-white/5 ${
-                        idx % 2 === 0 ? "bg-[#1e222b]" : "bg-[#232730]"
-                      }`}
-                    >
-                      <td className="px-3 py-2 font-mono text-on-surface-variant/50 font-bold text-[10px]">
-                        {idx + 1}
-                      </td>
-                      {columns.map((col) => (
-                        <td
-                          key={col}
-                          className="px-3 py-2 font-mono text-inverse-primary font-semibold"
-                        >
-                          {row[col]}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Navigation */}
-        <div className="flex gap-4 select-none pb-4 shrink-0">
-          <Link
-            href="/testing-upload"
-            className="flex-1 bg-surface border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high rounded-xl py-3.5 font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-          >
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-            &lt; Back to Upload
-          </Link>
-          <Link
-            href="/generate"
-            className="flex-1 bg-primary text-on-primary hover:bg-surface-tint rounded-xl py-3.5 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition-all select-none cursor-pointer"
-          >
-            Next: Generate
-            <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-          </Link>
-        </div>
+        {testingJob ? (
+          <>
+            <JobIdentityCard record={testingJob.record} gates={testingJob.gates} />
+            <Card title="Diagnostics" icon="report"><DiagnosticsList diagnostics={testingJob.record.diagnostics} /></Card>
+            <ReviewPanel nextPath="/generate" />
+            <InlineError error={error} />
+            {profiles && <MotionProfileForm key={`${testingJob.record.jobId}#${testingJob.record.revision}`} record={testingJob.record} speeds={profiles.speeds} zones={profiles.zones} busy={busy} disabled={!testingJob.gates.isLatest} onReprocess={reprocess} />}
+            <button type="button" onClick={() => { closeJob(); selectSource(null); router.push("/testing-upload"); }} className="self-start text-xs font-bold text-primary underline">Start a new point list (this job stays stored)</button>
+          </>
+        ) : (
+          <>
+            {sheet && <MappingEditor key={sheet.fileName + sheet.rows.length} sheet={sheet} onStored={(r) => { selectSource(r.source.id); setStored({ key: r.source.id, data: { source: r.source, preview: r.preview }, error: null }); }} />}
+            {!sheet && !pointSource && (
+              <Card title="Nothing staged" icon="info">
+                <p className="text-xs text-on-surface-variant">The spreadsheet is kept only in memory and is not available after a reload. Upload it again.</p>
+                <button type="button" onClick={() => router.push("/testing-upload")} className="mt-2 bg-primary text-on-primary rounded px-3 py-1.5 text-xs font-bold">Go to Upload</button>
+              </Card>
+            )}
+            {pointSource && (
+              <Card title="Stored point list" icon="inventory_2">
+                {storedView.error && <InlineError error={storedView.error} />}
+                {storedView.data && (
+                  <>
+                    <p className="text-xs font-mono break-all mb-2">{storedView.data.source.displayName} · {storedView.data.source.id}</p>
+                    <DiagnosticsList diagnostics={storedView.data.preview.diagnostics} emptyText="All rows validated." />
+                    <InlineError error={error} />
+                    <button type="button" onClick={createJob} disabled={busy || !storedView.data.preview.ok} className="mt-3 w-full bg-primary disabled:bg-surface-container-high disabled:text-on-surface-variant text-on-primary rounded-lg py-2.5 text-xs font-bold uppercase flex items-center justify-center gap-2">
+                      <Icon name={busy ? "progress_activity" : "play_arrow"} className={busy ? "animate-spin" : ""} />
+                      {storedView.data.preview.ok ? "Create job from this point list" : "Fix the rows before creating a job"}
+                    </button>
+                  </>
+                )}
+              </Card>
+            )}
+          </>
+        )}
+        <div className="pb-4" />
       </aside>
 
-      {/* Right Panel: Image Display */}
-      <div className="flex-1 h-full relative bg-inverse-surface overflow-hidden">
-        {/* Viewport-style header */}
-        <div className="absolute top-4 left-4 right-4 flex justify-between items-start z-10 pointer-events-none">
-          <div className="bg-surface/90 backdrop-blur-md border border-outline-variant rounded-lg p-2 pointer-events-auto shadow-lg flex items-center gap-3">
-            <span className="material-symbols-outlined text-primary">image</span>
-            <div className="flex flex-col">
-              <span className="font-label-md text-[10px] text-on-surface-variant uppercase tracking-widest font-bold">
-                Welding Path Reference
-              </span>
-              <span className="font-body-md text-[13px] text-on-surface font-semibold">
-                {imageFileName || "No image uploaded"}
-              </span>
-            </div>
+      <div className="flex-1 h-full overflow-y-auto bg-background p-6 flex flex-col gap-4 min-w-0">
+        {testingJob && <div className="bg-surface border border-outline-variant rounded-xl p-4"><TargetTable record={testingJob.record} /></div>}
+        {!testingJob && sheet && (
+          <div className="bg-surface border border-outline-variant rounded-xl p-4 overflow-x-auto">
+            <p className="text-[10px] font-bold uppercase text-on-surface-variant mb-2">Raw rows as read (first 50 of {sheet.rows.length})</p>
+            <table className="text-[11px] font-mono">
+              <thead><tr>{["row", ...sheet.headers].map((h) => <th key={h} scope="col" className="text-left pr-3 pb-1 border-b border-outline-variant/40">{h}</th>)}</tr></thead>
+              <tbody>{sheet.rows.slice(0, 50).map((r) => <tr key={r.__rowNumber}>{[r.__rowNumber, ...sheet.headers.map((h) => r[h])].map((v, i) => <td key={i} className="pr-3 py-0.5">{String(v)}</td>)}</tr>)}</tbody>
+            </table>
           </div>
-        </div>
-
-        {/* Grid background */}
-        <div className="absolute inset-0 viewport-grid pointer-events-none"></div>
-
-        {/* Image Display */}
-        <div className="flex-1 w-full h-full flex items-center justify-center p-8 relative">
-          {imageDataUrl ? (
-            <img
-              src={imageDataUrl}
-              alt="Welding path reference"
-              className="max-w-full max-h-full object-contain rounded-xl border border-outline-variant/30 shadow-2xl"
-            />
-          ) : (
-            <div className="border-2 border-dashed border-outline-variant/40 rounded-xl p-12 text-center max-w-lg bg-surface/30 backdrop-blur-sm shadow-sm">
-              <span className="material-symbols-outlined text-[48px] text-primary/40 mb-4 block">
-                image
-              </span>
-              <h3 className="text-lg text-on-surface font-semibold mb-2">No Image Available</h3>
-              <p className="text-sm text-on-surface-variant">
-                Upload a welding path image in the previous step to see it here.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom coordinate summary HUD */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-surface/90 backdrop-blur-md border border-outline-variant rounded-full p-1.5 shadow-2xl z-10 pointer-events-auto select-none">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full text-on-surface-variant font-bold text-xs">
-            <span className="material-symbols-outlined text-[18px] text-primary">scatter_plot</span>
-            <span>{csvData.length} welding points</span>
-          </div>
-          {stats.Z && (
-            <>
-              <div className="w-[1px] h-4 bg-outline-variant/60"></div>
-              <div className="flex items-center gap-2 px-4 py-2 rounded-full text-on-surface-variant font-bold text-xs">
-                <span className="material-symbols-outlined text-[18px]">height</span>
-                <span>Z: {stats.Z.min} → {stats.Z.max}</span>
-              </div>
-            </>
-          )}
-        </div>
+        )}
+        {image && (
+          <figure className="bg-surface border border-outline-variant rounded-xl p-4">
+            <Image src={image.url} alt={`Reference image ${image.name}`} width={image.width} height={image.height} unoptimized className="max-h-[360px] w-auto h-auto object-contain mx-auto" />
+            <figcaption className="text-[11px] text-on-surface-variant mt-2 text-center">Reference image (documentation only; not calibration or measured geometry).</figcaption>
+          </figure>
+        )}
       </div>
     </div>
   );

@@ -2,21 +2,20 @@
 
 import React from "react";
 
-export default function GlobalError({ error, reset }) {
+// Replaces the root layout when it fails. The raw error message is not shown
+// to the browser; details go to the console.
+export default function GlobalError({ error, retry: nextRetry, unstable_retry, reset }) {
+  if (typeof console !== "undefined") console.error(error);
+  const retry = nextRetry || unstable_retry || reset;
   return (
     <html lang="en" suppressHydrationWarning>
-      <body suppressHydrationWarning className="bg-background text-on-background min-h-screen flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <h2 className="text-2xl font-bold">Something went wrong!</h2>
-          {error?.message && (
-            <p className="text-sm text-on-surface-variant max-w-md font-mono bg-surface-container p-3 rounded">
-              {error.message}
-            </p>
-          )}
-          <button
-            onClick={() => reset()}
-            className="px-4 py-2 bg-primary text-on-primary rounded-lg font-semibold shadow hover:opacity-90 transition-opacity"
-          >
+      <body suppressHydrationWarning style={{ fontFamily: "system-ui, sans-serif", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ textAlign: "center", maxWidth: 420 }}>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>The application failed to load</h2>
+          <p style={{ fontSize: 14, color: "#414754" }}>
+            No data was generated or changed. Details are in the browser console{error && error.digest ? ` (reference ${error.digest})` : ""}.
+          </p>
+          <button type="button" onClick={() => (retry ? retry() : window.location.reload())} style={{ marginTop: 12, padding: "8px 16px", background: "#005bbf", color: "#fff", border: 0, borderRadius: 8, fontWeight: 600 }}>
             Try again
           </button>
         </div>

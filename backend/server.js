@@ -1,59 +1,49 @@
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const apiRoutes = require('./routes/apiRoutes');
-const { initTcpBridge } = require('./services/network/tcpBridge');
+const { loadRuntimeConfig, isLoopbackHost } = require('./services/config/runtimeConfig');
+const { createApp, buildServices } = require('./app');
 
-const app = express();
-const HTTP_PORT = process.env.PORT || 5000;
-const TCP_PORT = process.env.TCP_PORT || 7001;
+async function main() {
+  const config = loadRuntimeConfig();
 
-// Middleware Configuration
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  if (!isLoopbackHost(config.host) && !config.allowNonLoopback) {
+    console.error(`Refusing to bind to ${config.host}. This service writes files and can start a desktop application; it is intended for loopback only. Set VD_ALLOW_NON_LOOPBACK=1 only if you understand the consequences.`);
+    process.exit(1);
+  }
 
-// Static uploads serving
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+  const services = buildServices(config);
+  await services.store.init();
+  const app = createApp({ config, ...services });
 
-// REST API Routes
-app.use('/api', apiRoutes);
-
-// Root health check endpoint
-app.get('/', (req, res) => {
-  res.json({
-    service: 'VertexDynamics Robotics Backend Service',
-    status: 'online',
-    version: '1.0.0',
-    endpoints: {
-      ingestFiles: 'POST /api/ingest-files',
-      processPipeline: 'POST /api/process-pipeline',
-      rapidCode: 'GET /api/rapid-code',
-      bridgeStatus: 'GET /api/bridge/status',
-    },
-    tcpBridgePort: TCP_PORT,
-    timestamp: new Date().toISOString(),
+  const server = app.listen(config.port, config.host, () => {
+    console.log('=======================================================');
+    console.log('VertexDynamics backend (local, single operator)');
+    console.log(`API: http://${config.host}:${config.port}/api   data: ${config.dataDir}`);
+    console.log(`Allowed frontend origins: ${config.allowedOrigins.join(', ')}`);
+    console.log('=======================================================');
   });
-});
 
-// Start Express HTTP Server
-const server = app.listen(HTTP_PORT, () => {
-  console.log(`=======================================================`);
-  console.log(`🤖 VertexDynamics Robotics Backend Server`);
-  console.log(`🌐 HTTP REST API listening on http://localhost:${HTTP_PORT}`);
-  console.log(`=======================================================`);
-
-  // Initialize TCP Socket Bridge Server
-  initTcpBridge(TCP_PORT);
-});
-
-// Graceful Shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received. Closing HTTP server...');
-  server.close(() => {
-    console.log('HTTP server closed.');
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${config.port} on ${config.host} is already in use. Stop the other process or set PORT to a free port; this service does not stop other processes.`);
+    } else {
+      console.error('Backend failed to start:', err.message);
+    }
+    process.exit(1);
   });
-});
 
-module.exports = app;
+  const shutdown = (signal) => {
+    console.log(`${signal} received. Closing HTTP server...`);
+    server.close(() => process.exit(0));
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Backend failed to start:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { main };

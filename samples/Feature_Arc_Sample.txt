@@ -1,0 +1,23 @@
+# Feature_Arc_Sample.txt — curved workpiece, 3-point arc
+#
+# Three points ON the arc: start, via, end. The via point is what makes this an
+# arc rather than a straight seam — the circle is fitted through all three, so
+# any sweep angle works, not just a half turn.
+#
+# Coordinates are in ROBOT WORKSPACE (mm), not camera space. There is no
+# hand-eye transform in the pipeline; whatever is written here is where the
+# torch goes. These values sit near the table anchor the station is verified
+# around, [1133.5, -38.2, 480.3].
+#
+# Fitted geometry: radius 186.75mm, sweep 69.69deg, bow 33.49mm off the chord.
+
+type: arc
+units: mm
+arc_start:  1133.5288, -38.2234, 480.278
+arc_via:    1080.0,     60.0,    480.278
+arc_end:    980.0,      110.0,   480.278
+seam_width: 5.54
+
+# Legacy straight-seam files keep working untouched — a file carrying only a
+# curve: line is parsed exactly as it always was:
+# curve:414.69,1112.75,320.342,338.531,1333.74,322.068,5.54

@@ -1,11 +1,18 @@
 {
   "name": "rmit-vertex-dynamics-monorepo",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "node run-all.js",
-    "setup": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "setup": "npm --prefix backend ci && npm --prefix frontend ci",
     "backend": "npm --prefix backend start",
-    "frontend": "npm --prefix frontend run dev"
+    "frontend": "npm --prefix frontend run dev",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "lint": "npm --prefix frontend run lint",
+    "build": "npm --prefix frontend run build",
+    "check": "npm run test && npm run lint && npm run build"
   }
 }

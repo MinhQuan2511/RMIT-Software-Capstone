@@ -1,0 +1,385 @@
+/**
+ * Local, filesystem-backed store for projects, sources, jobs and revisions.
+ *
+ *   <dataDir>/projects/<projectId>.json
+ *   <dataDir>/sources/<sourceId>/meta.json      + content (raw bytes)
+ *   <dataDir>/jobs/<jobId>/job.json
+ *   <dataDir>/jobs/<jobId>/rev-0001.json        immutable revision record
+ *   <dataDir>/jobs/<jobId>/rev-0001.mod         exact module bytes
+ *   <dataDir>/jobs/<jobId>/rev-0001.review.json acknowledgements, reviews, evidence, exports
+ *
+ * Writes are atomic (temp file + rename/link). Revision files are created
+ * exclusively, so two concurrent requests can never produce the same revision
+ * number. IDs are validated against strict patterns before any path is built.
+ * Nothing is ever deleted by the store.
+ */
+
+const fs = require('fs');
+const fsp = fs.promises;
+const path = require('path');
+const crypto = require('crypto');
+const { writeFileAtomic, createFileExclusive, readJson, createKeyedMutex } = require('../util/atomicFs');
+const { sha256 } = require('../util/hash');
+const { AppError } = require('../util/errors');
+
+const SCHEMA_VERSION = 1;
+
+const SOURCE_KINDS = Object.freeze({
+  manual_upload: 'manual',
+  watch_folder: 'watch',
+  demo: 'demo',
+  testing_point_list: 'points',
+});
+
+const ID = {
+  project: /^prj_[a-f0-9]{32}$/,
+  job: /^job_[a-f0-9]{32}$/,
+  source: /^src_(manual|watch|demo|points)_[a-f0-9]{24}$/,
+  calibration: /^cal_[a-f0-9]{24}$/,
+};
+
+/**
+ * Where the bytes came from, independent of how they arrived (transport =
+ * sourceKind). Declarations are operator statements, kept append-only next to
+ * the immutable source; the default is user_supplied_unverified.
+ */
+const SOURCE_PROVENANCE = Object.freeze({
+  recorded_device_export: 'Operator declares the bytes are an unmodified export recorded by the vision software/device.',
+  user_supplied_unverified: 'Supplied by a user; origin not verified.',
+  synthetic_fixture: 'Constructed for testing; not a measurement of any workpiece.',
+});
+const DEFAULT_PROVENANCE = 'user_supplied_unverified';
+
+const newId = (prefix) => `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
+const revFile = (n) => `rev-${String(n).padStart(4, '0')}`;
+
+function assertId(kind, id) {
+  if (typeof id !== 'string' || !ID[kind].test(id)) throw new AppError(404, 'NOT_FOUND', `Unknown ${kind}.`);
+}
+
+function assertRevision(n) {
+  if (!Number.isInteger(n) || n < 1 || n > 9999) throw new AppError(404, 'NOT_FOUND', 'Unknown revision.');
+}
+
+/** Display-only name: strip directories and control characters, bound length. */
+function displayName(name) {
+  const base = String(name ?? '').split(/[\\/]/).pop() || '';
+  // eslint-disable-next-line no-control-regex
+  const clean = base.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 255);
+  return clean || 'unnamed';
+}
+
+function emptyReview() {
+  return { schemaVersion: SCHEMA_VERSION, acknowledgements: {}, geometryReview: null, moduleReview: null, externalEvidence: [], exports: [] };
+}
+
+function createJobStore({ dataDir, clock = () => new Date() }) {
+  const dirs = {
+    projects: path.join(dataDir, 'projects'),
+    sources: path.join(dataDir, 'sources'),
+    jobs: path.join(dataDir, 'jobs'),
+    calibrations: path.join(dataDir, 'calibrations'),
+  };
+  const lock = createKeyedMutex();
+  const now = () => clock().toISOString();
+
+  const missing = (err) => err && err.code === 'ENOENT';
+
+  async function readOr404(file, what) {
+    try {
+      return await readJson(file);
+    } catch (err) {
+      if (missing(err)) throw new AppError(404, 'NOT_FOUND', `Unknown ${what}.`);
+      throw err;
+    }
+  }
+
+  return {
+    dataDir,
+    async init() {
+      await Promise.all(Object.values(dirs).map((d) => fsp.mkdir(d, { recursive: true })));
+    },
+
+    // ---- projects -------------------------------------------------------
+    async createProject({ name, description = '' }) {
+      if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 80) {
+        throw new AppError(422, 'PROJECT_NAME_INVALID', 'Project name must be 1–80 characters.');
+      }
+      if (typeof description !== 'string' || description.length > 500) {
+        throw new AppError(422, 'PROJECT_DESCRIPTION_INVALID', 'Description must be at most 500 characters.');
+      }
+      const t = now();
+      const project = { schemaVersion: SCHEMA_VERSION, id: newId('prj'), name: name.trim(), description: description.trim(), createdAt: t, updatedAt: t };
+      await createFileExclusive(path.join(dirs.projects, `${project.id}.json`), JSON.stringify(project, null, 2));
+      return project;
+    },
+    async getProject(id) {
+      assertId('project', id);
+      return readOr404(path.join(dirs.projects, `${id}.json`), 'project');
+    },
+    async listProjects() {
+      const names = await fsp.readdir(dirs.projects).catch((e) => (missing(e) ? [] : Promise.reject(e)));
+      const projects = [];
+      for (const n of names.filter((f) => ID.project.test(f.replace(/\.json$/, '')))) {
+        try { projects.push(await readJson(path.join(dirs.projects, n))); } catch { /* skip unreadable record */ }
+      }
+      return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    },
+    async touchProject(id) {
+      return lock(`project:${id}`, async () => {
+        const p = await this.getProject(id);
+        p.updatedAt = now();
+        await writeFileAtomic(path.join(dirs.projects, `${id}.json`), JSON.stringify(p, null, 2));
+        return p;
+      });
+    },
+
+    // ---- sources --------------------------------------------------------
+    /**
+     * Stores immutable source bytes. Identical bytes of the same kind are
+     * idempotent (same ID); a different kind always gets a different ID.
+     */
+    async putSource({ content, kind, name, contentType, channelDetail = null }) {
+      const short = SOURCE_KINDS[kind];
+      if (!short) throw new Error(`jobStore: unknown source kind ${kind}`);
+      const buf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf-8');
+      const hash = sha256(buf);
+      const id = `src_${short}_${hash.slice(0, 24)}`;
+      const dir = path.join(dirs.sources, id);
+      return lock(`source:${id}`, async () => {
+        const metaPath = path.join(dir, 'meta.json');
+        let meta = null;
+        try { meta = await readJson(metaPath); } catch (err) { if (!missing(err)) throw err; }
+        if (meta) {
+          if (meta.sha256 !== hash) throw new AppError(409, 'SOURCE_HASH_COLLISION', 'Source identifier collision; refusing to overwrite.');
+          const dn = displayName(name);
+          if (!meta.displayNames.includes(dn) && meta.displayNames.length < 20) {
+            meta.displayNames.push(dn);
+            await writeFileAtomic(metaPath, JSON.stringify(meta, null, 2));
+          }
+          return { source: meta, created: false };
+        }
+        await fsp.mkdir(dir, { recursive: true });
+        await createFileExclusive(path.join(dir, 'content'), buf);
+        meta = {
+          schemaVersion: SCHEMA_VERSION,
+          id,
+          sha256: hash,
+          sizeBytes: buf.length,
+          sourceKind: kind,
+          contentType,
+          displayName: displayName(name),
+          displayNames: [displayName(name)],
+          importedAt: now(),
+          channelDetail,
+        };
+        await writeFileAtomic(metaPath, JSON.stringify(meta, null, 2));
+        return { source: meta, created: true };
+      });
+    },
+    async getSource(id) {
+      assertId('source', id);
+      return readOr404(path.join(dirs.sources, id, 'meta.json'), 'source');
+    },
+    async getSourceContent(id) {
+      assertId('source', id);
+      const meta = await this.getSource(id);
+      const buf = await fsp.readFile(path.join(dirs.sources, id, 'content'));
+      if (sha256(buf) !== meta.sha256) throw new AppError(500, 'SOURCE_INTEGRITY', 'Stored source bytes do not match their recorded hash.');
+      return { meta, content: buf };
+    },
+    async listSources({ limit = 50 } = {}) {
+      const names = await fsp.readdir(dirs.sources).catch((e) => (missing(e) ? [] : Promise.reject(e)));
+      const out = [];
+      for (const n of names.filter((f) => ID.source.test(f))) {
+        try { out.push(await readJson(path.join(dirs.sources, n, 'meta.json'))); } catch { /* skip */ }
+      }
+      return out.sort((a, b) => b.importedAt.localeCompare(a.importedAt)).slice(0, limit);
+    },
+
+    // ---- source provenance (append-only operator declarations) -------------
+    async getSourceProvenance(id) {
+      const meta = await this.getSource(id);
+      let record = null;
+      try { record = await readJson(path.join(dirs.sources, id, 'provenance.json')); } catch (err) { if (!missing(err)) throw err; }
+      const declarations = record && Array.isArray(record.declarations) ? record.declarations : [];
+      const last = declarations[declarations.length - 1];
+      return {
+        sourceId: meta.id,
+        transport: meta.sourceKind,
+        effective: last
+          ? { value: last.provenance, declared: true, declaredBy: last.declaredBy, at: last.at, note: last.note }
+          : { value: DEFAULT_PROVENANCE, declared: false, declaredBy: null, at: null, note: 'Default: no provenance has been declared for this source.' },
+        declarations,
+      };
+    },
+    async declareSourceProvenance(id, { provenance, declaredBy, note = '' }) {
+      if (!Object.prototype.hasOwnProperty.call(SOURCE_PROVENANCE, provenance)) {
+        throw new AppError(422, 'PROVENANCE_INVALID', `provenance must be one of ${Object.keys(SOURCE_PROVENANCE).join(', ')}.`);
+      }
+      if (typeof note !== 'string' || note.length > 500) throw new AppError(422, 'PROVENANCE_NOTE_INVALID', 'note must be text of at most 500 characters.');
+      await this.getSource(id);
+      const file = path.join(dirs.sources, id, 'provenance.json');
+      await lock(`source:${id}`, async () => {
+        let record = { schemaVersion: SCHEMA_VERSION, declarations: [] };
+        try { record = await readJson(file); } catch (err) { if (!missing(err)) throw err; }
+        const last = record.declarations[record.declarations.length - 1];
+        if (last && last.provenance === provenance && last.note === note.trim()) return;
+        if (record.declarations.length >= 50) throw new AppError(409, 'PROVENANCE_HISTORY_FULL', 'This source already has 50 provenance declarations.');
+        record.declarations.push({ provenance, declaredBy, at: now(), note: note.trim() });
+        await writeFileAtomic(file, JSON.stringify(record, null, 2));
+      });
+      return this.getSourceProvenance(id);
+    },
+
+    // ---- calibration files (inspection only; never applied) ----------------
+    /** Stores the exact bytes of an OpenCV YAML file, content-addressed, plus optional companion metadata files. */
+    async putCalibration({ content, name, companion = null }) {
+      const buf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf-8');
+      const hash = sha256(buf);
+      const id = `cal_${hash.slice(0, 24)}`;
+      const dir = path.join(dirs.calibrations, id);
+      const metaPath = path.join(dir, 'meta.json');
+      return lock(`calibration:${id}`, async () => {
+        let meta = null;
+        try { meta = await readJson(metaPath); } catch (err) { if (!missing(err)) throw err; }
+        let created = false;
+        if (meta) {
+          if (meta.sha256 !== hash) throw new AppError(409, 'CALIBRATION_HASH_COLLISION', 'Calibration identifier collision; refusing to overwrite.');
+        } else {
+          await fsp.mkdir(dir, { recursive: true });
+          await createFileExclusive(path.join(dir, 'content'), buf);
+          meta = { schemaVersion: SCHEMA_VERSION, id, sha256: hash, sizeBytes: buf.length, format: 'opencv_filestorage_yaml', displayName: displayName(name), importedAt: now(), companions: [] };
+          created = true;
+        }
+        let changed = created;
+        if (companion) {
+          const cBuf = Buffer.isBuffer(companion.content) ? companion.content : Buffer.from(companion.content, 'utf-8');
+          const cHash = sha256(cBuf);
+          if (!meta.companions.some((c) => c.sha256 === cHash)) {
+            if (meta.companions.length >= 10) throw new AppError(409, 'CALIBRATION_COMPANIONS_FULL', 'At most 10 companion files per calibration file.');
+            await createFileExclusive(path.join(dir, `companion-${cHash.slice(0, 24)}`), cBuf);
+            meta.companions.push({
+              sha256: cHash, sizeBytes: cBuf.length, displayName: displayName(companion.name), kind: 'cfig_json', uploadedAt: now(),
+              association: 'Uploaded together by the operator. Association with this calibration or with any capture is not verified.',
+            });
+            changed = true;
+          }
+        }
+        if (changed) await writeFileAtomic(metaPath, JSON.stringify(meta, null, 2));
+        return { meta, created };
+      });
+    },
+    async getCalibrationContent(id) {
+      assertId('calibration', id);
+      const dir = path.join(dirs.calibrations, id);
+      const meta = await readOr404(path.join(dir, 'meta.json'), 'calibration');
+      const content = await fsp.readFile(path.join(dir, 'content'));
+      if (sha256(content) !== meta.sha256) throw new AppError(500, 'CALIBRATION_INTEGRITY', 'Stored calibration bytes do not match their recorded hash.');
+      const companions = [];
+      for (const c of meta.companions) {
+        const buf = await fsp.readFile(path.join(dir, `companion-${c.sha256.slice(0, 24)}`));
+        if (sha256(buf) !== c.sha256) throw new AppError(500, 'CALIBRATION_INTEGRITY', 'A stored companion file does not match its recorded hash.');
+        companions.push({ ...c, content: buf });
+      }
+      return { meta, content, companions };
+    },
+    async listCalibrations({ limit = 50 } = {}) {
+      const names = await fsp.readdir(dirs.calibrations).catch((e) => (missing(e) ? [] : Promise.reject(e)));
+      const out = [];
+      for (const n of names.filter((f) => ID.calibration.test(f))) {
+        try { out.push(await readJson(path.join(dirs.calibrations, n, 'meta.json'))); } catch { /* skip */ }
+      }
+      return out.sort((a, b) => b.importedAt.localeCompare(a.importedAt)).slice(0, limit);
+    },
+
+    // ---- jobs & revisions -------------------------------------------------
+    async createJobWithRevision({ projectId, buildRecord }) {
+      assertId('project', projectId);
+      await this.getProject(projectId);
+      const jobId = newId('job');
+      const t = now();
+      const job = { schemaVersion: SCHEMA_VERSION, id: jobId, projectId, createdAt: t, updatedAt: t, latestRevision: 0, revisions: [] };
+      await fsp.mkdir(path.join(dirs.jobs, jobId), { recursive: true });
+      await writeFileAtomic(path.join(dirs.jobs, jobId, 'job.json'), JSON.stringify(job, null, 2));
+      const record = await this.appendRevision(jobId, { buildRecord });
+      await this.touchProject(projectId);
+      return { job: await this.getJob(jobId), record };
+    },
+    async getJob(id) {
+      assertId('job', id);
+      return readOr404(path.join(dirs.jobs, id, 'job.json'), 'job');
+    },
+    async listJobs(projectId) {
+      assertId('project', projectId);
+      const names = await fsp.readdir(dirs.jobs).catch((e) => (missing(e) ? [] : Promise.reject(e)));
+      const jobs = [];
+      for (const n of names.filter((f) => ID.job.test(f))) {
+        try {
+          const j = await readJson(path.join(dirs.jobs, n, 'job.json'));
+          if (j.projectId === projectId) jobs.push(j);
+        } catch { /* skip */ }
+      }
+      return jobs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    },
+    /**
+     * @param {string} jobId
+     * @param {{buildRecord: (ctx: {jobId, projectId, revision, createdAt}) => object, baseRevision?: number}} opts
+     */
+    async appendRevision(jobId, { buildRecord, baseRevision }) {
+      assertId('job', jobId);
+      return lock(`job:${jobId}`, async () => {
+        const job = await this.getJob(jobId);
+        if (baseRevision !== undefined && baseRevision !== job.latestRevision) {
+          throw new AppError(409, 'REVISION_CONFLICT',
+            `This job is at revision ${job.latestRevision}, not ${baseRevision}. Reload the current revision before reprocessing.`,
+            { details: { latestRevision: job.latestRevision } });
+        }
+        const revision = job.latestRevision + 1;
+        const createdAt = now();
+        const record = buildRecord({ jobId, projectId: job.projectId, revision, createdAt });
+        const base = path.join(dirs.jobs, jobId, revFile(revision));
+        if (!(await createFileExclusive(`${base}.json`, JSON.stringify(record, null, 2)))) {
+          throw new AppError(409, 'REVISION_CONFLICT', 'Another request created this revision first. Reload and retry.');
+        }
+        await createFileExclusive(`${base}.mod`, record.output.code);
+        await writeFileAtomic(`${base}.review.json`, JSON.stringify(emptyReview(), null, 2));
+        job.latestRevision = revision;
+        job.updatedAt = createdAt;
+        job.revisions.push({ revision, createdAt, sourceId: record.source.id, parametersSha256: record.parametersSha256, configurationSha256: record.configurationSha256, outputSha256: record.output.sha256 });
+        await writeFileAtomic(path.join(dirs.jobs, jobId, 'job.json'), JSON.stringify(job, null, 2));
+        return record;
+      });
+    },
+    async getRevision(jobId, revision) {
+      assertId('job', jobId);
+      assertRevision(revision);
+      return readOr404(path.join(dirs.jobs, jobId, `${revFile(revision)}.json`), 'revision');
+    },
+    async getModuleBytes(jobId, revision) {
+      assertId('job', jobId);
+      assertRevision(revision);
+      const record = await this.getRevision(jobId, revision);
+      const code = await fsp.readFile(path.join(dirs.jobs, jobId, `${revFile(revision)}.mod`), 'utf-8');
+      if (sha256(code) !== record.output.sha256) throw new AppError(500, 'MODULE_INTEGRITY', 'Stored module bytes do not match the recorded output hash.');
+      return { record, code };
+    },
+    async getReview(jobId, revision) {
+      assertId('job', jobId);
+      assertRevision(revision);
+      return readOr404(path.join(dirs.jobs, jobId, `${revFile(revision)}.review.json`), 'revision');
+    },
+    async updateReview(jobId, revision, mutate) {
+      assertId('job', jobId);
+      assertRevision(revision);
+      return lock(`review:${jobId}:${revision}`, async () => {
+        const review = await this.getReview(jobId, revision);
+        const next = (await mutate(review)) || review;
+        await writeFileAtomic(path.join(dirs.jobs, jobId, `${revFile(revision)}.review.json`), JSON.stringify(next, null, 2));
+        return next;
+      });
+    },
+  };
+}
+
+module.exports = { createJobStore, SOURCE_KINDS, SOURCE_PROVENANCE, DEFAULT_PROVENANCE, ID, SCHEMA_VERSION, displayName };

@@ -1,0 +1,38 @@
+# Continuous integration: backend tests, frontend lint, frontend tests, production build.
+# Added locally; it runs only after the team pushes it. It never deploys.
+name: ci
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Install backend
+        run: npm ci
+        working-directory: backend
+      - name: Backend tests
+        run: npm test
+        working-directory: backend
+      - name: Install frontend
+        run: npm ci
+        working-directory: frontend
+      - name: Frontend lint
+        run: npm run lint
+        working-directory: frontend
+      - name: Frontend tests
+        run: npm test
+        working-directory: frontend
+      - name: Frontend build
+        run: npm run build
+        working-directory: frontend
